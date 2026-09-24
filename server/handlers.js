@@ -247,7 +247,7 @@ export const handlers = {
     try {
       if (execOut('docker --version')) return { ok: true, already: true }
       // distro-aware: pacman/apt/dnf first, get.docker.com only as fallback
-      const out = execOut(`
+      execOut(`
         if command -v docker >/dev/null 2>&1; then echo 'already installed'; exit 0; fi
         if command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm --needed docker docker-buildx docker-compose
         elif command -v apt-get >/dev/null 2>&1; then
