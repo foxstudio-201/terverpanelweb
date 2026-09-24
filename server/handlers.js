@@ -314,7 +314,7 @@ export const handlers = {
     let version = ''
     if (installed) {
       try {
-        const out = execOut(`"${binaryPath}" --version 2>&1 || true`)
+        execOut(`"${binaryPath}" --version 2>&1 || true`)
         const match = out.match(/(\d+\.\d+\.\d+)/)
         if (match) version = match[1]
       } catch {}
