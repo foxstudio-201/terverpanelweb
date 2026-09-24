@@ -289,7 +289,7 @@ export const handlers = {
   },
   'systemd:logs': async (name, lines) => {
     const n = Math.min(500, Math.max(10, parseInt(lines) || 100))
-    const out = execOut(`journalctl -u ${String(name).replace(/[^a-zA-Z0-9_.@-]/g, '')} -n ${n} --no-pager 2>/dev/null`, 8000)
+    execOut(`journalctl -u ${String(name).replace(/[^a-zA-Z0-9_.@-]/g, '')} -n ${n} --no-pager 2>/dev/null`, 8000)
     return { ok: true, logs: out }
   },
   'cloudflared:start': async () => ({ ok: false, error: 'not implemented' }),
