@@ -289,7 +289,7 @@ export const handlers = {
   },
   'systemd:logs': async (name, lines) => {
     const n = Math.min(500, Math.max(10, parseInt(lines) || 100))
-    execOut(`journalctl -u ${String(name).replace(/[^a-zA-Z0-9_.@-]/g, '')} -n ${n} --no-pager 2>/dev/null`, 8000)
+    const out = execOut(`journalctl -u ${String(name).replace(/[^a-zA-Z0-9_.@-]/g, '')} -n ${n} --no-pager 2>/dev/null`, 8000)
     return { ok: true, logs: out }
   },
   'cloudflared:start': async () => ({ ok: false, error: 'not implemented' }),
@@ -314,7 +314,7 @@ export const handlers = {
     let version = ''
     if (installed) {
       try {
-        execOut(`"${binaryPath}" --version 2>&1 || true`)
+        const out = execOut(`"${binaryPath}" --version 2>&1 || true`)
         const match = out.match(/(\d+\.\d+\.\d+)/)
         if (match) version = match[1]
       } catch {}
