@@ -32,6 +32,10 @@ export function getWingsRemoteToken() {
   return { id: wingsApiTokenId, token: wingsApiToken }
 }
 
+export function getServerByUuidRemote(uuid) {
+  return getRemoteServers().find(s => s.settings?.uuid === uuid) || null
+}
+
 export async function wingsApiCall(method, endpoint, body) {
   const url = `${WINGS_BASE}${endpoint}`
   const headers = {

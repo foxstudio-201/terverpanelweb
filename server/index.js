@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url'
 import { authMiddleware, registerUser, loginUser, logoutUser, getSessionFromToken, hasUsers } from './auth.js'
 import { readSettings, writeSettings, ensureAppDataDir, APP_DATA_DIR } from './db.js'
 import { invokeHandler } from './handlers.js'
-import { getRemoteServers } from './wings.js'
+import { getRemoteServers, getWingsRemoteToken } from './wings.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -83,7 +83,23 @@ app.post('/api/invoke', authMiddleware, async (req, res) => {
 })
 
 // ---- Wings remote API (for Wings daemon → panel) ----
-app.get('/api/remote/servers', (req, res) => {
+// Auth: Bearer {tokenId}.{token} matching ~/.config/terver-panel/wings-api-token.json
+function remoteAuth(req, res, next) {
+  const header = req.headers.authorization || ''
+  if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' })
+  const bearer = header.slice(7)
+  const dot = bearer.indexOf('.')
+  if (dot < 1) return res.status(403).json({ error: 'Invalid token' })
+  const reqId = bearer.slice(0, dot)
+  const reqToken = bearer.slice(dot + 1)
+  const expect = getWingsRemoteToken()
+  if (reqId !== String(expect.id) || reqToken !== expect.token) {
+    return res.status(403).json({ error: 'Invalid token' })
+  }
+  next()
+}
+
+app.get('/api/remote/servers', remoteAuth, (req, res) => {
   const servers = getRemoteServers()
   const page = parseInt(req.query.page) || 1
   const perPage = parseInt(req.query.per_page) || 50
@@ -103,9 +119,28 @@ app.get('/api/remote/servers', (req, res) => {
   })
 })
 
-app.post('/api/remote/servers/reset', (req, res) => {
+app.get('/api/remote/servers/:uuid', remoteAuth, (req, res) => {
+  const servers = getRemoteServers()
+  const server = servers.find(s => s.settings?.uuid === req.params.uuid)
+  if (!server) return res.status(404).json({ error: 'Server not found', errors: [] })
+  res.json(server)
+})
+
+app.post('/api/remote/servers/reset', remoteAuth, (req, res) => {
   res.json({ data: getRemoteServers() })
 })
+
+app.post('/api/remote/servers/:uuid/install', remoteAuth, (req, res) => {
+  res.json({ data: { done: true } })
+})
+
+app.get('/api/remote/servers/:uuid/install', remoteAuth, (req, res) => {
+  res.json({ data: { script: '', container: '', entrypoint: '' } })
+})
+
+app.post('/api/remote/activity', remoteAuth, (req, res) => res.json({ ok: true }))
+app.post('/api/remote/schedule', remoteAuth, (req, res) => res.json({ ok: true }))
+app.post('/api/remote/sftp/auth', remoteAuth, (req, res) => res.status(401).json({ error: 'SFTP not supported' }))
 
 // ---- static frontend ----
 if (fs.existsSync(DIST)) {
@@ -123,7 +158,7 @@ if (fs.existsSync(DIST)) {
 const server = http.createServer(app)
 const wss = new WebSocketServer({ server, path: '/ws' })
 
-wss.on('connection', (ws, req) => {
+wss.on('connection', (ws) => {
   clients.add(ws)
   ws.send(JSON.stringify({ type: 'hello', data: { version: PACKAGE_VERSION } }))
   ws.on('close', () => clients.delete(ws))

@@ -6,7 +6,7 @@ import https from 'https'
 import { readSettings, writeSettings, listServerConfigs, getServerByUuid, updateServerConfig, generateUUID, EGGS_DIR, addServerConfig, removeServerConfig } from './db.js'
 import { registerUser, loginUser, logoutUser, getSessionFromToken } from './auth.js'
 import {
-  getRemoteServers, powerServer, getStatus, getServerState,
+  getWingsRemoteToken, getRemoteServers, powerServer, getStatus, getServerState,
   listWingsFiles, readWingsFile, writeWingsFile, deleteWingsPath,
   createWingsFolder, renameWingsPath, sendWingsCommand, getWingsLogs,
   reinstallServer, deleteServerRemote, createServerRemote, syncServerConfig,
@@ -243,7 +243,16 @@ export const handlers = {
       return { ok: true, installed: false, version: '', composeVersion: '', running: false, containers: 0 }
     }
   },
-  'docker:install': async () => ({ ok: false, error: 'Use system package manager or get.docker.com on the host' }),
+  'docker:install': async () => {
+    try {
+      if (execOut('docker --version')) return { ok: true, already: true }
+      execOut('curl -fsSL https://get.docker.com/ | CHANNEL=stable bash', 300000)
+      execOut('systemctl enable --now docker 2>/dev/null || true', 30000)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err) }
+    }
+  },
   'docker:start': async () => {
     try { execOut('sudo systemctl start docker', 15000); return { ok: true } }
     catch (err) { return { ok: false, error: String(err) } }
@@ -283,40 +292,130 @@ export const handlers = {
     let binaryPath = ''
     let installed = false
     try {
-      const sysBin = execOut('which wings 2>/dev/null')
-      if (sysBin && fs.existsSync(sysBin)) { binaryPath = sysBin; installed = true }
+      if (fs.existsSync('/usr/local/bin/wings')) { binaryPath = '/usr/local/bin/wings'; installed = true }
+      else {
+        const sysBin = execOut('which wings 2>/dev/null')
+        if (sysBin && fs.existsSync(sysBin)) { binaryPath = sysBin; installed = true }
+      }
     } catch {}
     let running = false
     let version = ''
     if (installed) {
       try {
-        const out = execOut(`${binaryPath} --version 2>&1 || true`)
+        const out = execOut(`"${binaryPath}" --version 2>&1 || true`)
         const match = out.match(/(\d+\.\d+\.\d+)/)
         if (match) version = match[1]
       } catch {}
       try {
-        const status = execOut('systemctl is-active wings 2>/dev/null || systemctl is-active pterodactyl-wings 2>/dev/null || systemctl is-active lunarspace-wings 2>/dev/null')
+        const status = execOut('systemctl is-active lunarspace-wings 2>/dev/null || systemctl is-active wings 2>/dev/null || systemctl is-active pterodactyl-wings 2>/dev/null')
         running = status === 'active'
       } catch {}
     }
+    const configPath = '/etc/lunarspace-wings/config.yml'
     let hasConfig = false
-    try { hasConfig = fs.existsSync('/etc/pterodactyl/config.yml') || fs.existsSync(path.join(os.homedir(), '.config', 'terver-panel', 'wings-config.yml')) } catch {}
-    return { ok: true, installed, running, version, arch: '', hasConfig, hasService: running, binaryPath, configPath: '' }
+    try { hasConfig = fs.existsSync(configPath) } catch {}
+    let hasService = false
+    try { hasService = fs.existsSync('/etc/systemd/system/lunarspace-wings.service') } catch {}
+    return { ok: true, installed, running, version, arch: '', hasConfig, hasService, binaryPath, configPath: hasConfig ? configPath : '' }
   },
-  'wings:install': async () => ({ ok: false, error: 'Install Wings on the host — see docs. Panel expects Wings on :8080' }),
+  'wings:install': async () => {
+    // Prefer the full installer path; in-panel re-install downloads the binary only.
+    try {
+      const archMap = { x86_64: 'x86_64', aarch64: 'aarch64', armv7l: 'armv7l' }
+      const arch = archMap[execOut('uname -m')] || 'x86_64'
+      const url = `https://github.com/foxstudio-201/lunarspacewinglunar/releases/latest/download/wings-rs-${arch}-linux`
+      const tmp = `/tmp/wings-rs-${arch}-linux`
+      execOut(`curl -fL --retry 3 "${url}" -o "${tmp}"`, 180000)
+      const size = fs.existsSync(tmp) ? fs.statSync(tmp).size : 0
+      if (size < 1000000) {
+        try { fs.unlinkSync(tmp) } catch {}
+        return { ok: false, error: `Wings download too small (${size} bytes)` }
+      }
+      execOut(`install -m 755 "${tmp}" /usr/local/bin/wings`, 15000)
+      try { fs.unlinkSync(tmp) } catch {}
+      // ensure service unit exists
+      if (!fs.existsSync('/etc/systemd/system/lunarspace-wings.service')) {
+        return handlers['wings:config:generate']()
+      }
+      execOut('systemctl daemon-reload', 10000)
+      return { ok: true, arch }
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err) }
+    }
+  },
   'wings:start': async () => {
     try {
-      execOut('sudo systemctl start wings || sudo systemctl start pterodactyl-wings || sudo systemctl start lunarspace-wings', 15000)
+      execOut('systemctl start lunarspace-wings 2>/dev/null || systemctl start wings || systemctl start pterodactyl-wings', 15000)
       return { ok: true }
     } catch (err) { return { ok: false, error: String(err) } }
   },
   'wings:stop': async () => {
     try {
-      execOut('sudo systemctl stop wings || sudo systemctl stop pterodactyl-wings || sudo systemctl stop lunarspace-wings', 15000)
+      execOut('systemctl stop lunarspace-wings 2>/dev/null || systemctl stop wings || systemctl stop pterodactyl-wings', 15000)
       return { ok: true }
     } catch (err) { return { ok: false, error: String(err) } }
   },
-  'wings:config:generate': async () => ({ ok: false, error: 'Generate config on host Wings install' }),
+  'wings:config:generate': async () => {
+    try {
+      const yaml = (await import('js-yaml')).default
+      const crypto = await import('crypto')
+      const configDir = '/etc/lunarspace-wings'
+      const dataDir = '/var/lib/terver/wings'
+      const configPath = `${configDir}/config.yml`
+      fs.mkdirSync(configDir, { recursive: true })
+      for (const d of ['servers', 'logs', 'diffs', 'vmounts', 'archives', 'backups', 'tmp']) {
+        fs.mkdirSync(`${dataDir}/${d}`, { recursive: true })
+      }
+      const token = getWingsRemoteToken()
+      const port = parseInt(process.env.PORT || process.env.TERVER_PORT || '8000', 10)
+      const config = {
+        uuid: crypto.randomUUID(),
+        token_id: String(token.id),
+        token: token.token,
+        remote: `http://127.0.0.1:${port}`,
+        api: { host: '0.0.0.0', port: 8080, ssl: { enabled: false }, send_offline_server_logs: true, websocket_log_count: 500 },
+        system: {
+          root_directory: dataDir,
+          data: `${dataDir}/servers`,
+          log_directory: `${dataDir}/logs`,
+          diffs_directory: `${dataDir}/diffs`,
+          vmount_directory: `${dataDir}/vmounts`,
+          archive_directory: `${dataDir}/archives`,
+          backup_directory: `${dataDir}/backups`,
+          tmp_directory: `${dataDir}/tmp`,
+          username: 'lunarspace',
+        },
+        allowed_mounts: ['/home', `${dataDir}/servers`],
+        docker: { network: { interface: 'wings0', name: 'lunarspace-net', mode: 'lunarspace-net', subnet: '172.18.0.0/16' } },
+      }
+      fs.writeFileSync(configPath, yaml.dump(config), { mode: 0o600 })
+      // write systemd unit if missing
+      const unitPath = '/etc/systemd/system/lunarspace-wings.service'
+      if (!fs.existsSync(unitPath)) {
+        const unit = `[Unit]
+Description=LunarSpace Wings Daemon
+After=network.target docker.service docker.socket
+Wants=docker.socket
+
+[Service]
+User=root
+KillMode=process
+LimitNOFILE=4096
+ExecStart=/usr/local/bin/wings --config ${configPath}
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+`
+        fs.writeFileSync(unitPath, unit, { mode: 0o644 })
+        execOut('systemctl daemon-reload', 10000)
+      }
+      return { ok: true, path: configPath, token: config.token, uuid: config.uuid }
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err) }
+    }
+  },
   'wings:servers:list': async () => ({ ok: true, servers: getRemoteServers() }),
   'wings:server:state': async (uuid) => getServerState(uuid),
   'wings:server:power': async (uuid, action) => powerServer(uuid, action),
