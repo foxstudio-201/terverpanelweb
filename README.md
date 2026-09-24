@@ -11,7 +11,7 @@ curl -fsSL https://raw.githubusercontent.com/foxstudio-201/terverpanelweb/main/s
 The installer will:
 
 1. Install **Node.js 22** (if missing)
-2. Install & start **Docker** via [get.docker.com](https://get.docker.com) (if missing)
+2. Install & start **Docker** (pacman/apt/dnf/zypper/apk first; `get.docker.com` as fallback) (if missing)
 3. Clone this repo → `/opt/terver-panel` and build the UI
 4. Generate a Wings API token → `~/.config/terver-panel/wings-api-token.json`
 5. Download **Wings** binary → `/usr/local/bin/wings`

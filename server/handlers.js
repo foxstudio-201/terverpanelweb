@@ -246,7 +246,19 @@ export const handlers = {
   'docker:install': async () => {
     try {
       if (execOut('docker --version')) return { ok: true, already: true }
-      execOut('curl -fsSL https://get.docker.com/ | CHANNEL=stable bash', 300000)
+      // distro-aware: pacman/apt/dnf first, get.docker.com only as fallback
+      const out = execOut(`
+        if command -v docker >/dev/null 2>&1; then echo 'already installed'; exit 0; fi
+        if command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm --needed docker docker-buildx docker-compose
+        elif command -v apt-get >/dev/null 2>&1; then
+          (curl -fsSL https://get.docker.com/ | CHANNEL=stable bash) || apt-get install -y docker.io docker-compose
+        elif command -v dnf >/dev/null 2>&1; then dnf install -y docker docker-cli-compose
+        elif command -v yum >/dev/null 2>&1; then yum install -y docker docker-compose
+        elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install docker
+        elif command -v apk >/dev/null 2>&1; then apk add docker docker-compose
+        else curl -fsSL https://get.docker.com/ | CHANNEL=stable bash; fi
+        command -v docker && docker --version || true
+      `, 300000)
       execOut('systemctl enable --now docker 2>/dev/null || true', 30000)
       return { ok: true }
     } catch (err) {

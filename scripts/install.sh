@@ -76,8 +76,42 @@ log "Node $(node -v)"
 
 # ── 2. Docker ───────────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1; then
-  log "Docker not found — installing via get.docker.com (stable)..."
-  curl -fsSL https://get.docker.com/ | CHANNEL=stable bash
+  log "Docker not found — installing via system packages..."
+  case "$PKG" in
+    pacman)
+      # Arch / CachyOS / Manjaro / EndeavourOS (get.docker.com does not support these)
+      pacman -Sy --noconfirm --needed docker docker-buildx docker-compose || \
+        pacman -S --noconfirm --needed docker docker-buildx docker-compose
+      ;;
+    apt)
+      # Debian / Ubuntu / Mint etc. — official convenience script works
+      if curl -fsSL https://get.docker.com/ | CHANNEL=stable bash; then
+        :
+      else
+        apt-get install -y docker.io docker-buildx docker-compose-plugin || \
+          apt-get install -y docker.io
+      fi
+      ;;
+    dnf|yum)
+      $PKG install -y docker docker-cli-compose || \
+        { curl -fsSL https://get.docker.com/ | CHANNEL=stable bash; } || true
+      ;;
+    zypper)
+      zypper --non-interactive install docker || true
+      ;;
+    apk)
+      apk add docker docker-cli-compose || true
+      ;;
+    *)
+      # last resort for unknown distros (Debian/Ubuntu/Fedora/RHEL)
+      warn "Unknown package manager — trying get.docker.com..."
+      curl -fsSL https://get.docker.com/ | CHANNEL=stable bash || true
+      ;;
+  esac
+fi
+if ! command -v docker >/dev/null 2>&1; then
+  err "Docker install failed (PKG=$PKG). Install Docker manually then re-run."
+  exit 1
 fi
 log "Docker: $(docker --version 2>/dev/null || echo 'check failed')"
 
