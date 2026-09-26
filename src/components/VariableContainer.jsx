@@ -6,6 +6,7 @@ function parseRules(rulesStr) {
 }
 
 function VariableContainer({ variable, value, onChange, theme }) {
+  const [show, setShow] = useState(false)
   const textColor = theme === 'light' ? '#111' : '#fff'
   const labelColor = theme === 'light' ? '#555' : 'rgba(255,255,255,0.6)'
   const inputBg = theme === 'light' ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.06)'
@@ -95,7 +96,6 @@ function VariableContainer({ variable, value, onChange, theme }) {
   }
 
   if (isSecret) {
-    const [show, setShow] = useState(false)
     return (
       <div>
         <label className="block text-xs font-medium mb-1" style={{ color: labelColor }}>

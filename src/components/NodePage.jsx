@@ -128,6 +128,7 @@ function NodePage({ theme, lang }) {
   const inputBg = theme === 'light' ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.06)'
   const inputBorder = theme === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)'
   const isElectron = typeof window !== 'undefined' && window.electronAPI
+  const isWeb = typeof window !== 'undefined' && !!window.__TERVER_WEB__
 
   const [tab, setTab] = useState('status')
   const statusRef = useRef({ docker: null, wings: null, cloudflare: null })
@@ -153,7 +154,7 @@ function NodePage({ theme, lang }) {
   const [cleanupLog, setCleanupLog] = useState('')
   const [copiedKey, setCopiedKey] = useState(null)
   const [cfConfig, setCfConfig] = useState({ tunnelName: 'terver-tunnel', appDomain: '' })
-  const [dockerConfig, setDockerConfig] = useState({ socketPath: '/var/run/docker.sock', dataDir: '/var/lib/docker', networkInterface: 'docker0' })
+  const [dockerConfig, setDockerConfig] = useState({ socketPath: '/run/terver-panel-docker/docker.sock', dataDir: '/var/lib/terver-panel-docker/data', networkInterface: 'tpweb0' })
 
   const [dockerProgress, setDockerProgress] = useState(null)
   const [wingsProgress, setWingsProgress] = useState(null)
@@ -250,10 +251,15 @@ function NodePage({ theme, lang }) {
 
   useEffect(() => {
     if (!isElectron) return
-    window.electronAPI.systemCheckAuth().then((res) => {
-      if (res?.authenticated) setAuthenticated(true)
-      else setAuthOpen(true)
-    }).catch(() => setAuthOpen(true))
+    // web edition: panel runs as root — no sudo/password modal needed
+    if (isWeb) {
+      setAuthenticated(true)
+    } else {
+      window.electronAPI.systemCheckAuth().then((res) => {
+        if (res?.authenticated) setAuthenticated(true)
+        else setAuthOpen(true)
+      }).catch(() => setAuthOpen(true))
+    }
     window.electronAPI.cloudflaredCheckAuth().then((res) => {
       if (res?.authenticated) setCfAuthenticated(true)
     }).catch(() => {})
@@ -267,8 +273,8 @@ function NodePage({ theme, lang }) {
         const wInst = statusRef.current.wings?.installed
         const cInst = statusRef.current.cloudflare?.installed
         const [d, w, c] = await Promise.all([
-          dInst ? window.electronAPI.systemdLogs('docker', 60) : Promise.resolve(null),
-          wInst ? window.electronAPI.systemdLogs('lunarspace-wings', 60) : Promise.resolve(null),
+          dInst ? window.electronAPI.systemdLogs('terver-panel-docker', 60) : Promise.resolve(null),
+          wInst ? window.electronAPI.systemdLogs('terver-panel-wings', 60) : Promise.resolve(null),
           cInst ? window.electronAPI.systemdLogs('cloudflared', 60) : Promise.resolve(null),
         ])
         if (d?.ok && d.logs) setDockerLog(d.logs)
@@ -717,31 +723,31 @@ function NodePage({ theme, lang }) {
           <div className="space-y-3">
             <ServiceCard title="Docker Engine" icon={<svg className="w-4 h-4" style={{ color: dockerColor }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 6V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"/></svg>} color={dockerColor} installed={docker?.installed} running={docker?.running} version={docker?.version} theme={theme} onInstall={handleDockerInstall} onUninstall={handleDockerUninstall} onStart={async () => {
               setDockerLog('[INFO] ' + (lang === 'vi' ? 'Đang khởi động Docker...' : 'Starting Docker...'))
-              const res = await window.electronAPI.systemdStart('docker')
+              const res = await window.electronAPI.systemdStart('terver-panel-docker')
               if (res?.ok) { setDockerLog(res.logs || '[OK] Docker đã chạy!'); addToast(lang === 'vi' ? 'Docker đã khởi động!' : 'Docker started!', 'ok') }
               else { const errText = res?.error || res?.startOutput || res?.logs || ''; setDockerLog(errText ? '[LỖI] ' + errText : '[LỖI] Không khởi động được Docker'); addToast(lang === 'vi' ? 'Khởi động Docker thất bại' : 'Docker start failed', 'error') }
               setTimeout(refreshAll, 2000)
             }} onStop={async () => {
               setDockerLog('[INFO] ' + (lang === 'vi' ? 'Đang dừng Docker...' : 'Stopping Docker...'))
-              const res = await window.electronAPI.systemdStop('docker')
+              const res = await window.electronAPI.systemdStop('terver-panel-docker')
               if (res?.ok) { setDockerLog(res.logs || '[OK] Docker đã dừng!'); addToast(lang === 'vi' ? 'Docker đã dừng!' : 'Docker stopped!', 'ok') }
               else { setDockerLog(res?.logs || '[LỖI] ' + (res?.error || '')); addToast(lang === 'vi' ? 'Dừng Docker thất bại' : 'Docker stop failed', 'error') }
               setTimeout(refreshAll, 2000)
-            }} onLoadLogs={async () => { const res = await window.electronAPI.systemdStatus('docker'); if (res?.logs) setDockerLog(res.logs) }} installing={dockerInstalling} uninstalling={dockerUninstalling} progress={dockerProgress} log={dockerLog} logPlaceholder={docker?.installed ? (docker?.running ? (lang === 'vi' ? 'Docker đang chạy.' : 'Docker running.') : (lang === 'vi' ? 'Docker đã cài, chưa chạy.' : 'Docker installed, not running.')) : (lang === 'vi' ? 'Chưa cài đặt.' : 'Not installed.')} copiedKey={copiedKey} copyKey="docker" onCopy={() => copy('docker', dockerLog)} />
+            }} onLoadLogs={async () => { const res = await window.electronAPI.systemdStatus('terver-panel-docker'); if (res?.logs) setDockerLog(res.logs) }} installing={dockerInstalling} uninstalling={dockerUninstalling} progress={dockerProgress} log={dockerLog} logPlaceholder={docker?.installed ? (docker?.running ? (lang === 'vi' ? 'Docker đang chạy.' : 'Docker running.') : (lang === 'vi' ? 'Docker đã cài, chưa chạy.' : 'Docker installed, not running.')) : (lang === 'vi' ? 'Chưa cài đặt.' : 'Not installed.')} copiedKey={copiedKey} copyKey="docker" onCopy={() => copy('docker', dockerLog)} />
 
             <ServiceCard title="LunarSpace Wings" icon={<svg className="w-4 h-4" style={{ color: wingsColor }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>} color={wingsColor} installed={wings?.installed} running={wings?.running} version={wings?.version} theme={theme} onInstall={handleWingsInstall} onUninstall={handleWingsUninstall} onStart={async () => {
               setWingsLog('[INFO] ' + (lang === 'vi' ? 'Đang khởi động Wings...' : 'Starting Wings...'))
-              const res = await window.electronAPI.systemdStart('lunarspace-wings')
+              const res = await window.electronAPI.systemdStart('terver-panel-wings')
               if (res?.ok) { setWingsLog(res.logs || '[OK] Wings đã chạy!'); addToast(lang === 'vi' ? 'Wings đã khởi động!' : 'Wings started!', 'ok') }
               else { const errText = res?.error || res?.startOutput || res?.logs || ''; setWingsLog(errText ? '[LỖI] ' + errText : '[LỖI] Không khởi động được Wings'); addToast(lang === 'vi' ? 'Khởi động Wings thất bại: ' + (res?.error || res?.startOutput || '').slice(0, 80) : 'Wings start failed', 'error') }
               setTimeout(refreshAll, 2000)
             }} onStop={async () => {
               setWingsLog('[INFO] ' + (lang === 'vi' ? 'Đang dừng Wings...' : 'Stopping Wings...'))
-              const res = await window.electronAPI.systemdStop('lunarspace-wings')
+              const res = await window.electronAPI.systemdStop('terver-panel-wings')
               if (res?.ok) { setWingsLog(res.logs || '[OK] Wings đã dừng!'); addToast(lang === 'vi' ? 'Wings đã dừng!' : 'Wings stopped!', 'ok') }
               else { setWingsLog(res?.logs || '[LỖI] ' + (res?.error || '')); addToast(lang === 'vi' ? 'Dừng Wings thất bại' : 'Wings stop failed', 'error') }
               setTimeout(refreshAll, 2000)
-            }} onLoadLogs={async () => { const res = await window.electronAPI.systemdStatus('lunarspace-wings'); if (res?.logs) setWingsLog(res.logs) }} installing={wingsInstalling} uninstalling={wingsUninstalling} progress={wingsProgress} log={wingsLog} logPlaceholder={wings?.installed ? (wings?.running ? (lang === 'vi' ? 'Wings đang chạy.' : 'Wings running.') : (lang === 'vi' ? 'Wings đã cài, chưa chạy.' : 'Wings installed, not running.')) : (lang === 'vi' ? 'Chưa cài đặt.' : 'Not installed.')} copiedKey={copiedKey} copyKey="wings" onCopy={() => copy('wings', wingsLog)}>
+            }} onLoadLogs={async () => { const res = await window.electronAPI.systemdStatus('terver-panel-wings'); if (res?.logs) setWingsLog(res.logs) }} installing={wingsInstalling} uninstalling={wingsUninstalling} progress={wingsProgress} log={wingsLog} logPlaceholder={wings?.installed ? (wings?.running ? (lang === 'vi' ? 'Wings đang chạy.' : 'Wings running.') : (lang === 'vi' ? 'Wings đã cài, chưa chạy.' : 'Wings installed, not running.')) : (lang === 'vi' ? 'Chưa cài đặt.' : 'Not installed.')} copiedKey={copiedKey} copyKey="wings" onCopy={() => copy('wings', wingsLog)}>
               {wings?.installed && !wings?.hasConfig && (
                 <button onClick={handleWingsConfigGenerate} className="w-full py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: wingsConfigSaved ? '#22c55e' : '#a78bfa', color: '#fff' }}>
                   {wingsConfigSaved ? (lang === 'vi' ? 'Đã tạo!' : 'Generated!') : (lang === 'vi' ? 'Tạo config.yml' : 'Generate config.yml')}

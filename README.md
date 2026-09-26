@@ -11,14 +11,15 @@ curl -fsSL https://raw.githubusercontent.com/foxstudio-201/terverpanelweb/main/s
 The installer will:
 
 1. Install **Node.js 22** (if missing)
-2. Install & start **Docker** (pacman/apt/dnf/zypper/apk first; `get.docker.com` as fallback) (if missing)
+2. Install Docker packages, then run an **isolated Docker instance** — own unit `terver-panel-docker`, own socket `/run/terver-panel-docker/docker.sock`, own data-root `/var/lib/terver-panel-docker/data` (never touches system Docker or desktop TerverPanel)
 3. Clone this repo → `/opt/terver-panel` and build the UI
 4. Generate a Wings API token → `~/.config/terver-panel/wings-api-token.json`
 5. Download **Wings** binary → `/usr/local/bin/wings`
-6. Write Wings config → `/etc/lunarspace-wings/config.yml`
+6. Write Wings config → `/etc/terver-panel-wings/config.yml`
 7. Install & enable systemd units:
    - `terver-panel` → panel on `:8000`
-   - `lunarspace-wings` → Wings API on `:8080`
+   - `terver-panel-docker` → isolated Docker engine
+   - `terver-panel-wings` → Wings API on `:8080`
 
 Open `http://SERVER_IP:8000` → create admin (OOBE) → manage servers.
 
@@ -50,9 +51,9 @@ npm start          # serve API + dist/
 ## Service
 
 ```bash
-sudo systemctl status terver-panel lunarspace-wings docker
+sudo systemctl status terver-panel terver-panel-wings terver-panel-docker
 journalctl -u terver-panel -f
-journalctl -u lunarspace-wings -f
+journalctl -u terver-panel-wings -f
 ```
 
 ## License

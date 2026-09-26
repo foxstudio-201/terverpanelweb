@@ -21,6 +21,42 @@ function execOut(cmd, timeout = 5000) {
   }
 }
 
+// Isolated Docker instance — never touches system or desktop TerverPanel Docker
+const DOCKER_UNIT = 'terver-panel-docker'
+const DOCKER_SOCK = '/run/terver-panel-docker/docker.sock'
+const DOCKER_DATA = '/var/lib/terver-panel-docker/data'
+const DOCKER_HOST_URL = `unix://${DOCKER_SOCK}`
+const WINGS_UNIT = 'terver-panel-wings'
+const WINGS_CONFIG_DIR = '/etc/terver-panel-wings'
+const WINGS_CONFIG_PATH = `${WINGS_CONFIG_DIR}/config.yml`
+process.env.DOCKER_HOST = process.env.DOCKER_HOST || DOCKER_HOST_URL
+
+function writeDockerUnit() {
+  const dockerd = execOut('command -v dockerd') || '/usr/bin/dockerd'
+  const unit = `[Unit]
+Description=TerverPanel Web Docker Engine (isolated)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+ExecStart=${dockerd} -H ${DOCKER_HOST_URL} --pidfile /run/terver-panel-docker/docker.pid --data-root ${DOCKER_DATA} --bridge=tpweb0 --bip=172.20.0.1/24
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=1048576
+RuntimeDirectory=terver-panel-docker
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
+`
+  fs.writeFileSync(`/etc/systemd/system/${DOCKER_UNIT}.service`, unit, { mode: 0o644 })
+}
+
 function fetchJson(url, timeout = 10000) {
   return new Promise((resolve, reject) => {
     https.get(url, { timeout }, (res) => {
@@ -97,13 +133,20 @@ export const handlers = {
   'system:auth': async (password) => {
     try {
       const user = os.userInfo().username
+      // web panel runs as root (systemd User=root) — no sudo prompt needed
+      if (typeof process.getuid === 'function' && process.getuid() === 0) {
+        return { ok: true, authenticated: true, user }
+      }
       const r = execSync(`echo ${JSON.stringify(password)} | sudo -S -v`, { timeout: 8000, encoding: 'utf8' })
-      return { ok: true, user, out: r }
+      return { ok: true, authenticated: true, user, out: r }
     } catch (err) {
       return { ok: false, error: err.message }
     }
   },
-  'system:checkAuth': async () => ({ ok: true }),
+  'system:checkAuth': async () => ({
+    ok: true,
+    authenticated: typeof process.getuid === 'function' && process.getuid() === 0,
+  }),
   'system:cleanup': async (type) => ({ ok: true, type }),
 
   // ---- eggs ----
@@ -234,20 +277,22 @@ export const handlers = {
         version = execOut('docker --version')
         installed = !!version
         composeVersion = execOut('docker compose version')
-        const s = execOut('systemctl is-active docker 2>/dev/null')
+        const s = execOut(`systemctl is-active ${DOCKER_UNIT} 2>/dev/null`)
         running = s === 'active'
         containers = parseInt(execOut('docker ps -q 2>/dev/null | wc -l')) || 0
       } catch {}
-      return { ok: true, installed, version, composeVersion, running, containers, usingSystem: true }
+      return { ok: true, installed, version, composeVersion, running, containers, usingSystem: false, socket: DOCKER_SOCK }
     } catch {
       return { ok: true, installed: false, version: '', composeVersion: '', running: false, containers: 0 }
     }
   },
   'docker:install': async () => {
     try {
-      if (execOut('docker --version')) return { ok: true, already: true }
-      // distro-aware: pacman/apt/dnf first, get.docker.com only as fallback
-      execOut(`
+      let already = true
+      if (!execOut('docker --version')) {
+        already = false
+        // distro-aware: pacman/apt/dnf first, get.docker.com only as fallback
+        execOut(`
         if command -v docker >/dev/null 2>&1; then echo 'already installed'; exit 0; fi
         if command -v pacman >/dev/null 2>&1; then pacman -Sy --noconfirm --needed docker docker-buildx docker-compose
         elif command -v apt-get >/dev/null 2>&1; then
@@ -259,18 +304,23 @@ export const handlers = {
         else curl -fsSL https://get.docker.com/ | CHANNEL=stable bash; fi
         command -v docker && docker --version || true
       `, 300000)
-      execOut('systemctl enable --now docker 2>/dev/null || true', 30000)
-      return { ok: true }
+      }
+      if (!execOut('command -v dockerd')) return { ok: false, error: 'dockerd not found after install' }
+      // ensure isolated instance unit exists + running (own socket/data, never system docker)
+      writeDockerUnit()
+      execOut('systemctl daemon-reload', 10000)
+      execOut(`systemctl enable --now ${DOCKER_UNIT} 2>/dev/null || true`, 30000)
+      return { ok: true, already }
     } catch (err) {
       return { ok: false, error: String(err?.message || err) }
     }
   },
   'docker:start': async () => {
-    try { execOut('sudo systemctl start docker', 15000); return { ok: true } }
+    try { execOut(`sudo systemctl start ${DOCKER_UNIT}`, 15000); return { ok: true } }
     catch (err) { return { ok: false, error: String(err) } }
   },
   'docker:stop': async () => {
-    try { execOut('sudo systemctl stop docker', 15000); return { ok: true } }
+    try { execOut(`sudo systemctl stop ${DOCKER_UNIT}`, 15000); return { ok: true } }
     catch (err) { return { ok: false, error: String(err) } }
   },
   'docker:config:get': async () => ({ ok: true, config: readSettings().paths || {} }),
@@ -319,15 +369,15 @@ export const handlers = {
         if (match) version = match[1]
       } catch {}
       try {
-        const status = execOut('systemctl is-active lunarspace-wings 2>/dev/null || systemctl is-active wings 2>/dev/null || systemctl is-active pterodactyl-wings 2>/dev/null')
+        const status = execOut(`systemctl is-active ${WINGS_UNIT} 2>/dev/null`)
         running = status === 'active'
       } catch {}
     }
-    const configPath = '/etc/lunarspace-wings/config.yml'
+    const configPath = WINGS_CONFIG_PATH
     let hasConfig = false
     try { hasConfig = fs.existsSync(configPath) } catch {}
     let hasService = false
-    try { hasService = fs.existsSync('/etc/systemd/system/lunarspace-wings.service') } catch {}
+    try { hasService = fs.existsSync(`/etc/systemd/system/${WINGS_UNIT}.service`) } catch {}
     return { ok: true, installed, running, version, arch: '', hasConfig, hasService, binaryPath, configPath: hasConfig ? configPath : '' }
   },
   'wings:install': async () => {
@@ -346,7 +396,7 @@ export const handlers = {
       execOut(`install -m 755 "${tmp}" /usr/local/bin/wings`, 15000)
       try { fs.unlinkSync(tmp) } catch {}
       // ensure service unit exists
-      if (!fs.existsSync('/etc/systemd/system/lunarspace-wings.service')) {
+      if (!fs.existsSync(`/etc/systemd/system/${WINGS_UNIT}.service`)) {
         return handlers['wings:config:generate']()
       }
       execOut('systemctl daemon-reload', 10000)
@@ -357,13 +407,13 @@ export const handlers = {
   },
   'wings:start': async () => {
     try {
-      execOut('systemctl start lunarspace-wings 2>/dev/null || systemctl start wings || systemctl start pterodactyl-wings', 15000)
+      execOut(`systemctl start ${WINGS_UNIT}`, 15000)
       return { ok: true }
     } catch (err) { return { ok: false, error: String(err) } }
   },
   'wings:stop': async () => {
     try {
-      execOut('systemctl stop lunarspace-wings 2>/dev/null || systemctl stop wings || systemctl stop pterodactyl-wings', 15000)
+      execOut(`systemctl stop ${WINGS_UNIT}`, 15000)
       return { ok: true }
     } catch (err) { return { ok: false, error: String(err) } }
   },
@@ -371,9 +421,9 @@ export const handlers = {
     try {
       const yaml = (await import('js-yaml')).default
       const crypto = await import('crypto')
-      const configDir = '/etc/lunarspace-wings'
+      const configDir = WINGS_CONFIG_DIR
       const dataDir = '/var/lib/terver/wings'
-      const configPath = `${configDir}/config.yml`
+      const configPath = WINGS_CONFIG_PATH
       fs.mkdirSync(configDir, { recursive: true })
       for (const d of ['servers', 'logs', 'diffs', 'vmounts', 'archives', 'backups', 'tmp']) {
         fs.mkdirSync(`${dataDir}/${d}`, { recursive: true })
@@ -402,17 +452,19 @@ export const handlers = {
       }
       fs.writeFileSync(configPath, yaml.dump(config), { mode: 0o600 })
       // write systemd unit if missing
-      const unitPath = '/etc/systemd/system/lunarspace-wings.service'
+      const unitPath = `/etc/systemd/system/${WINGS_UNIT}.service`
       if (!fs.existsSync(unitPath)) {
         const unit = `[Unit]
-Description=LunarSpace Wings Daemon
-After=network.target docker.service docker.socket
-Wants=docker.socket
+Description=TerverPanel Web Wings Daemon
+After=network-online.target ${DOCKER_UNIT}.service
+Requires=${DOCKER_UNIT}.service
 
 [Service]
 User=root
 KillMode=process
 LimitNOFILE=4096
+Environment=DOCKER_HOST=${DOCKER_HOST_URL}
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do [ -S ${DOCKER_SOCK} ] && exit 0; sleep 1; done; echo "Docker socket not ready"; exit 1'
 ExecStart=/usr/local/bin/wings --config ${configPath}
 Restart=on-failure
 RestartSec=5s

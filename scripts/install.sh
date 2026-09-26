@@ -10,14 +10,20 @@ SERVICE_NAME="terver-panel"
 PORT="${PORT:-8000}"
 HOST="${HOST:-0.0.0.0}"
 
-# Wings (same binary as desktop TerverPanel)
+# Wings (same binary as desktop TerverPanel — own unit/config, never shared)
 WINGS_REPO="${WINGS_REPO:-foxstudio-201/lunarspacewinglunar}"
 WINGS_BIN="/usr/local/bin/wings"
-WINGS_CONFIG_DIR="${WINGS_CONFIG_DIR:-/etc/lunarspace-wings}"
+WINGS_CONFIG_DIR="${WINGS_CONFIG_DIR:-/etc/terver-panel-wings}"
 WINGS_CONFIG="$WINGS_CONFIG_DIR/config.yml"
 WINGS_DATA="${WINGS_DATA:-/var/lib/terver/wings}"
-WINGS_SERVICE="lunarspace-wings"
+WINGS_SERVICE="terver-panel-wings"
 WINGS_API_PORT="${WINGS_API_PORT:-8080}"
+
+# Isolated Docker instance (own unit/socket/data — never touches system or desktop Docker)
+DOCKER_UNIT="terver-panel-docker"
+DOCKER_SOCK="/run/terver-panel-docker/docker.sock"
+DOCKER_DATA="${TERVER_DOCKER_DATA:-/var/lib/terver-panel-docker/data}"
+DOCKER_HOST_URL="unix://$DOCKER_SOCK"
 
 # Panel data (token store shared by panel + wings config)
 PANEL_HOME="${PANEL_HOME:-/root}"
@@ -74,8 +80,8 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 log "Node $(node -v)"
 
-# ── 2. Docker ───────────────────────────────────────────────
-if ! command -v docker >/dev/null 2>&1; then
+# ── 2. Docker (isolated instance — own unit/socket/data) ─────
+if ! command -v docker >/dev/null 2>&1 || ! command -v dockerd >/dev/null 2>&1; then
   log "Docker not found — installing via system packages..."
   case "$PKG" in
     pacman)
@@ -109,21 +115,43 @@ if ! command -v docker >/dev/null 2>&1; then
       ;;
   esac
 fi
-if ! command -v docker >/dev/null 2>&1; then
+if ! command -v dockerd >/dev/null 2>&1; then
   err "Docker install failed (PKG=$PKG). Install Docker manually then re-run."
   exit 1
 fi
 log "Docker: $(docker --version 2>/dev/null || echo 'check failed')"
 
-if ! systemctl is-active --quiet docker 2>/dev/null; then
-  log "Starting Docker..."
-  systemctl enable --now docker 2>/dev/null || true
-  sleep 1
-fi
-if systemctl is-active --quiet docker 2>/dev/null; then
-  log "Docker is running"
+DOCKERD_BIN="$(command -v dockerd)"
+log "Writing isolated Docker unit ($DOCKER_UNIT)"
+cat > "/etc/systemd/system/${DOCKER_UNIT}.service" <<EOF
+[Unit]
+Description=TerverPanel Web Docker Engine (isolated)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+ExecStart=${DOCKERD_BIN} -H ${DOCKER_HOST_URL} --pidfile /run/terver-panel-docker/docker.pid --data-root ${DOCKER_DATA} --bridge=tpweb0 --bip=172.20.0.1/24
+ExecReload=/bin/kill -s HUP \$MAINPID
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=1048576
+RuntimeDirectory=terver-panel-docker
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now "$DOCKER_UNIT" 2>/dev/null || true
+sleep 1
+if systemctl is-active --quiet "$DOCKER_UNIT" 2>/dev/null; then
+  log "Isolated Docker is running ($DOCKER_SOCK)"
 else
-  warn "Docker not active — check: systemctl status docker"
+  warn "Isolated Docker not active — journalctl -u $DOCKER_UNIT"
 fi
 
 # ── 3. Clone / update panel ─────────────────────────────────
@@ -203,6 +231,14 @@ WINGS_UUID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || openssl rand -hex 
 # Panel is on the same host; Wings pulls remote config from panel /api/remote
 PANEL_REMOTE="http://127.0.0.1:${PORT}"
 
+# migrate legacy config dir (pre-rename installs)
+if [[ -f /etc/lunarspace-wings/config.yml && ! -f "$WINGS_CONFIG" ]]; then
+  log "Migrating legacy Wings config /etc/lunarspace-wings → $WINGS_CONFIG_DIR"
+  mkdir -p "$WINGS_CONFIG_DIR"
+  mv /etc/lunarspace-wings/config.yml "$WINGS_CONFIG"
+  rmdir /etc/lunarspace-wings 2>/dev/null || true
+fi
+
 if [[ ! -f "$WINGS_CONFIG" || "${FORCE_WINGS_CONFIG:-0}" = "1" ]]; then
   log "Writing $WINGS_CONFIG"
   cat > "$WINGS_CONFIG" <<EOF
@@ -246,16 +282,17 @@ fi
 log "Writing /etc/systemd/system/${WINGS_SERVICE}.service"
 cat > "/etc/systemd/system/${WINGS_SERVICE}.service" <<EOF
 [Unit]
-Description=LunarSpace Wings Daemon
-After=network.target docker.service docker.socket
-Wants=docker.socket
+Description=TerverPanel Web Wings Daemon
+After=network-online.target ${DOCKER_UNIT}.service
+Requires=${DOCKER_UNIT}.service
 
 [Service]
 User=root
 KillMode=process
 LimitNOFILE=4096
 PIDFile=/run/${WINGS_SERVICE}/daemon.pid
-ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do [ -S /run/docker.sock ] && exit 0; sleep 1; done; echo "Docker socket not ready"; exit 1'
+Environment=DOCKER_HOST=${DOCKER_HOST_URL}
+ExecStartPre=/bin/bash -c 'for i in \$(seq 1 30); do [ -S ${DOCKER_SOCK} ] && exit 0; sleep 1; done; echo "Docker socket not ready"; exit 1'
 ExecStart=${WINGS_BIN} --config ${WINGS_CONFIG}
 Restart=on-failure
 StartLimitInterval=180
@@ -284,8 +321,8 @@ log "Writing $UNIT"
 cat > "$UNIT" <<EOF
 [Unit]
 Description=TerverPanel Web (game server panel)
-After=network.target docker.service docker.socket
-Wants=docker.socket
+After=network-online.target ${DOCKER_UNIT}.service
+Wants=${DOCKER_UNIT}.service
 
 [Service]
 Type=simple
@@ -294,6 +331,7 @@ Environment=PORT=$PORT
 Environment=HOST=$HOST
 Environment=NODE_ENV=production
 Environment=TERVER_DATA_DIR=$APP_DATA
+Environment=DOCKER_HOST=$DOCKER_HOST_URL
 ExecStart=$NODE_BIN $INSTALL_DIR/server/index.js
 Restart=on-failure
 RestartSec=5
@@ -317,12 +355,12 @@ wings_ok=0
 docker_ok=0
 systemctl is-active --quiet "$SERVICE_NAME" && panel_ok=1
 systemctl is-active --quiet "$WINGS_SERVICE" && wings_ok=1
-systemctl is-active --quiet docker && docker_ok=1
+systemctl is-active --quiet "$DOCKER_UNIT" && docker_ok=1
 
 IP="$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")"
 
 log "────────────────────────────────────────"
-log "Docker:   $([[ $docker_ok -eq 1 ]] && echo active || echo NOT active)"
+log "Docker:   $([[ $docker_ok -eq 1 ]] && echo "active (isolated: $DOCKER_SOCK)" || echo NOT active)"
 log "Wings:    $([[ $wings_ok -eq 1 ]] && echo active || echo NOT active)  (config: $WINGS_CONFIG)"
 log "Panel:    $([[ $panel_ok -eq 1 ]] && echo active || echo failed)  → http://${IP}:${PORT}"
 log "Token:    $TOKEN_STORE"

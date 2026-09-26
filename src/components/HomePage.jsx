@@ -121,16 +121,6 @@ function GameModal({ game, theme, lang, onClose, onServerCreated }) {
   const sectionBg = theme === 'light' ? 'rgba(0,0,0,0.02)' : 'rgba(255,255,255,0.03)'
   const isElectron = typeof window !== 'undefined' && window.electronAPI
 
-  const handleTabChange = (tab) => {
-    if (tab === activeTab) return
-    setTabFade(false)
-    setTimeout(() => {
-      setPrevTab(tab)
-      setActiveTab(tab)
-      setTabFade(true)
-    }, 200)
-  }
-
   const editableVars = (eggData?.variables || []).filter(v => v.user_viewable && v.user_editable)
 
   const getEggIcon = (eggId) => {
