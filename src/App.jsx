@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { AppProvider, useApp } from './i18n/AppContext'
 import { t } from './i18n/translations'
-import { House, Gear, Heart, Cube, List, Terminal, Files, Database, Clock, Users, Archive, Network, Play, GearSix, ArrowLeft, ChartLineUp } from '@phosphor-icons/react'
+import { House, Gear, Heart, Cube, List, Terminal, Files, Database, Clock, Users, Archive, Network, Play, GearSix, ArrowLeft, ChartLineUp, ShieldCheck } from '@phosphor-icons/react'
 import TitleBar from './components/TitleBar'
 import CloseModal from './components/CloseModal'
 import ModeSelectModal from './components/ModeSelectModal'
@@ -12,6 +12,7 @@ import LoginPage from './components/LoginPage'
 import HomePage from './components/HomePage'
 import DonatePage from './components/DonatePage'
 import SettingsPage from './components/SettingsPage'
+import AdminUsersPage from './components/AdminUsersPage'
 import ServerPanel from './components/server/ServerPanel'
 
 function Spinner({ theme, lang, text }) {
@@ -40,6 +41,8 @@ const SERVER_PANEL_PAGES = [
   { key: 'server-settings', icon: GearSix, label: 'Settings', labelVi: 'Cài đặt' },
 ]
 
+const ADMIN_PAGES = ['docker', 'users']
+
 function AppContent() {
   const { lang, theme } = useApp()
   const [session, setSession] = useState(null)
@@ -53,6 +56,7 @@ function AppContent() {
   const [phase, setPhase] = useState('startup-spinner')
   const [displaySession, setDisplaySession] = useState(null)
   const [displayPage, setDisplayPage] = useState('servers')
+  const [viewMode, setViewMode] = useState('user')
   const [savedCredentials, setSavedCredentials] = useState({ savedUsername: '', savedPassword: '', rememberMe: false })
   const [sidebarServers, setSidebarServers] = useState([])
   const [showServerDropdown, setShowServerDropdown] = useState(false)
@@ -63,6 +67,7 @@ function AppContent() {
   const isElectron = typeof window !== 'undefined' && window.electronAPI
   const isBasic = false // web edition: always full Wings + Docker mode
   const isWeb = typeof window !== 'undefined' && window.__TERVER_WEB__
+  const isAdmin = !!displaySession?.user?.admin
 
   useEffect(() => {
     // Web edition: force advanced mode, skip ModeSelectModal
@@ -90,6 +95,10 @@ function AppContent() {
       if (result?.ok) {
         setSession(result)
         setDisplaySession(result)
+        const admin = !!result?.user?.admin
+        setViewMode(admin ? 'admin' : 'user')
+        setActivePage(admin ? 'docker' : 'servers')
+        setDisplayPage(admin ? 'docker' : 'servers')
         setPhase('startup-spinner')
         setTimeout(() => {
           setPhase('fading-in')
@@ -111,6 +120,7 @@ function AppContent() {
     if (!isElectron || !startupDone.current || isBasic) return
     const checkDocker = async () => {
       try {
+        if (!displaySession?.user?.admin) return
         const res = await window.electronAPI.checkDocker()
         if (res && !res.installed) {
           setDockerToast({
@@ -141,13 +151,27 @@ function AppContent() {
   }, [isElectron])
 
   const navigateTo = (page) => {
+    let target = page
+    if (ADMIN_PAGES.includes(target) && !isAdmin) target = 'servers'
     setPhase('fading-out')
     setTimeout(() => {
-      setDisplayPage(page)
-      setActivePage(page)
+      setDisplayPage(target)
+      setActivePage(target)
       setPhase('fading-in')
       setTimeout(() => setPhase('idle'), 200)
     }, 200)
+  }
+
+  const switchViewMode = (mode) => {
+    if (mode === 'admin' && !isAdmin) return
+    setSelectedSidebarServer(null)
+    setShowServerDropdown(false)
+    setViewMode(mode)
+    if (mode === 'admin') {
+      navigateTo(ADMIN_PAGES.includes(activePage) ? activePage : 'docker')
+    } else {
+      navigateTo('servers')
+    }
   }
 
   const handleSelectServer = (srv) => {
@@ -166,6 +190,10 @@ function AppContent() {
     setTimeout(() => {
       setSession(data)
       setDisplaySession(data)
+      const admin = !!data?.user?.admin
+      setViewMode(admin ? 'admin' : 'user')
+      setActivePage(admin ? 'docker' : 'servers')
+      setDisplayPage(admin ? 'docker' : 'servers')
       setPhase('login-spinner')
       setTimeout(() => {
         setPhase('fading-in')
@@ -184,6 +212,7 @@ function AppContent() {
       setSession(null)
       setDisplaySession(null)
       setSelectedSidebarServer(null)
+      setViewMode('user')
       setActivePage('servers')
       setDisplayPage('servers')
       setSavedCredentials({ savedUsername: '', savedPassword: '', rememberMe: false })
@@ -230,14 +259,15 @@ function AppContent() {
       )
     }
 
-    const isInServerPanel = displayPage.startsWith('server-')
+    const safePage = !isAdmin && ADMIN_PAGES.includes(displayPage) ? 'servers' : displayPage
+    const isInServerPanel = safePage.startsWith('server-')
 
     return (
       <div className="flex flex-1 overflow-hidden relative pt-11">
         <nav className="absolute left-0 top-11 bottom-0 z-50 w-[180px] flex flex-col py-3" style={{ background: theme === 'light' ? '#fafafa' : '#0d0d0d', borderRight: `1px solid ${borderColor}` }}>
           <div className="flex flex-col gap-1 px-2 py-1 flex-1">
-            {/* Server dropdown */}
-            {sidebarServers.length > 0 && (
+            {/* Server dropdown (user view only) */}
+            {viewMode === 'user' && sidebarServers.length > 0 && (
               <div className="relative">
                 <button
                   onClick={() => setShowServerDropdown(!showServerDropdown)}
@@ -346,6 +376,43 @@ function AppContent() {
                   )
                 })}
               </>
+            ) : viewMode === 'admin' ? (
+              <>
+                <button
+                  onClick={() => switchViewMode('user')}
+                  className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{ color: labelColor }}
+                >
+                  <ArrowLeft size={18} weight="duotone" />
+                  <span className="text-xs font-medium">{t(lang, 'sidebar.userView')}</span>
+                </button>
+
+                <div className="w-full h-px my-1" style={{ background: borderColor }} />
+
+                <button
+                  onClick={() => navigateTo('docker')}
+                  className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'docker' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'docker' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <Cube size={18} weight="duotone" />
+                  <span className="text-xs font-medium">{lang === 'vi' ? 'Quản lý Node' : 'Node'}</span>
+                </button>
+
+                <button
+                  onClick={() => navigateTo('users')}
+                  className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'users' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'users' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <Users size={18} weight="duotone" />
+                  <span className="text-xs font-medium">{t(lang, 'sidebar.users')}</span>
+                </button>
+              </>
             ) : (
               <>
                 <button
@@ -372,18 +439,19 @@ function AppContent() {
                   <span className="text-xs font-medium">{t(lang, 'home.donate')}</span>
                 </button>
 
-                <button
-                  onClick={() => navigateTo('docker')}
-                  className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
-                  style={{
-                    background: activePage === 'docker' ? 'rgba(167,139,250,0.12)' : 'transparent',
-                    color: activePage === 'docker' ? '#a78bfa' : labelColor,
-                    display: isBasic ? 'none' : undefined,
-                  }}
-                >
-                  <Cube size={18} weight="duotone" />
-                  <span className="text-xs font-medium">{lang === 'vi' ? 'Quản lý Node' : 'Node'}</span>
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => switchViewMode('admin')}
+                    className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                    style={{
+                      background: 'rgba(167,139,250,0.06)',
+                      color: '#a78bfa',
+                    }}
+                  >
+                    <ShieldCheck size={18} weight="duotone" />
+                    <span className="text-xs font-medium">{t(lang, 'sidebar.adminPanel')}</span>
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -413,10 +481,11 @@ function AppContent() {
 
         <div className="flex-1 ml-[180px] overflow-hidden">
           <div className={`h-full ${transitionClass}`}>
-            {displayPage === 'servers' && <HomePage theme={theme} lang={lang} onServerCreated={refreshSidebarServers} onSelectServer={handleSelectServer} />}
-            {displayPage === 'donate' && <DonatePage theme={theme} lang={lang} />}
-            {displayPage === 'docker' && !isBasic && <NodePage theme={theme} lang={lang} />}
-            {displayPage === 'settings' && <SettingsPage theme={theme} lang={lang} onAppModeChange={setAppMode} appMode={appMode} />}
+            {safePage === 'servers' && <HomePage theme={theme} lang={lang} onServerCreated={refreshSidebarServers} onSelectServer={handleSelectServer} />}
+            {safePage === 'donate' && <DonatePage theme={theme} lang={lang} />}
+            {safePage === 'docker' && !isBasic && isAdmin && <NodePage theme={theme} lang={lang} />}
+            {safePage === 'users' && isAdmin && <AdminUsersPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
+            {safePage === 'settings' && <SettingsPage theme={theme} lang={lang} onAppModeChange={setAppMode} appMode={appMode} />}
             {isInServerPanel && selectedSidebarServer && (
               <ServerPanel key={selectedSidebarServer.id} server={selectedSidebarServer} theme={theme} lang={lang} displayPage={displayPage} onBack={handleBackFromServer} onServerDeleted={refreshSidebarServers} onServerUpdate={(srv) => setSelectedSidebarServer(srv)} />
             )}

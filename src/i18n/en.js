@@ -3,6 +3,9 @@ const en = {
   'sidebar.settings': 'Settings',
   'sidebar.logout': 'Logout',
   'sidebar.home': 'Home',
+  'sidebar.adminPanel': 'Admin panel',
+  'sidebar.userView': 'User view',
+  'sidebar.users': 'Users',
 
   'login.title': 'TerverPanel',
   'login.subtitle': 'Gaming Hosting Launcher',

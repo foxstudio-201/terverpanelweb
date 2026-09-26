@@ -46,7 +46,7 @@ export function authMiddleware(req, res, next) {
   const session = (db.sessions || []).find(s => s.id === payload.sid)
   const user = (db.users || []).find(u => u.id === payload.uid)
   if (!session || !user) return res.status(401).json({ error: 'Session expired' })
-  req.user = { id: user.id, username: user.username }
+  req.user = { id: user.id, username: user.username, admin: !!user.admin }
   req.session = session
   next()
 }
@@ -67,11 +67,12 @@ export function registerUser({ username, password }) {
     id: generateUUID(),
     username,
     passwordHash: hashPassword(password),
+    admin: db.users.length === 0,
     createdAt: new Date().toISOString(),
   }
   db.users.push(newUser)
   writeDB(db)
-  return { ok: true, user: { id: newUser.id, username: newUser.username, createdAt: newUser.createdAt } }
+  return { ok: true, user: { id: newUser.id, username: newUser.username, admin: newUser.admin, createdAt: newUser.createdAt } }
 }
 
 export function loginUser({ username, password, rememberMe }) {
@@ -101,7 +102,7 @@ export function loginUser({ username, password, rememberMe }) {
     ok: true,
     token,
     session,
-    user: { id: user.id, username: user.username, createdAt: user.createdAt },
+    user: { id: user.id, username: user.username, admin: !!user.admin, createdAt: user.createdAt },
   }
 }
 
@@ -122,7 +123,7 @@ export function getSessionFromToken(token) {
   return {
     ok: true,
     session,
-    user: { id: user.id, username: user.username, createdAt: user.createdAt },
+    user: { id: user.id, username: user.username, admin: !!user.admin, createdAt: user.createdAt },
   }
 }
 

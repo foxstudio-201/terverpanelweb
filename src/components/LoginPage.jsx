@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { UserIcon, LockClosedIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
 import { useApp } from '../i18n/AppContext'
 import { t } from '../i18n/translations'
@@ -51,6 +51,12 @@ function LoginPage({ onLogin, initialUsername, initialPassword, initialRememberM
 
   const isElectron = typeof window !== 'undefined' && window.electronAPI
   const pwScore = getPasswordStrength(password)
+  const [needsSetup, setNeedsSetup] = useState(false)
+
+  useEffect(() => {
+    if (!window.__TERVER_WEB__) return
+    fetch('/api/oobe').then(r => r.json()).then(d => setNeedsSetup(!!d?.needsSetup)).catch(() => {})
+  }, [])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -227,6 +233,14 @@ function LoginPage({ onLogin, initialUsername, initialPassword, initialRememberM
             {loading ? t(lang, 'login.processing') : isRegister ? t(lang, 'login.register') : t(lang, 'login.login')}
           </button>
         </form>
+
+        {isRegister && needsSetup && (
+          <div className="mt-4 p-3 bg-purple-500/15 border border-purple-500/30 rounded-lg text-[13px] text-purple-300">
+            {lang === 'vi'
+              ? 'Đây là lần đầu khởi tạo. Tài khoản đầu tiên bạn tạo sẽ trở thành quản trị viên.'
+              : 'First-time setup: the account you create now becomes the administrator.'}
+          </div>
+        )}
 
         <div className="mt-6 text-center">
           <button

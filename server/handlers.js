@@ -11,7 +11,7 @@ import {
   createWingsFolder, renameWingsPath, sendWingsCommand, getWingsLogs,
   reinstallServer, deleteServerRemote, createServerRemote, syncServerConfig,
 } from './wings.js'
-import { readDB } from './db.js'
+import { readDB, writeDB } from './db.js'
 
 function execOut(cmd, timeout = 5000) {
   try {
@@ -70,6 +70,41 @@ function fetchJson(url, timeout = 10000) {
   })
 }
 
+// ---- admin / ownership guards (Calagopus-style admin vs user panels) ----
+const ADMIN_CHANNELS = new Set([
+  'docker:config:get', 'docker:config:save', 'docker:install', 'docker:start', 'docker:stop',
+  'wings:install', 'wings:start', 'wings:stop', 'wings:config:generate',
+  'systemd:status', 'systemd:start', 'systemd:stop', 'systemd:logs',
+  'system:auth', 'system:checkAuth', 'system:cleanup',
+  'node:loadConfigs',
+  'cloudflare:install', 'cloudflare:tunnel:create', 'cloudflare:tunnel:install-service', 'cloudflare:tunnel:login',
+  'database:setup', 'database:install',
+  'users:list', 'users:create', 'users:delete', 'users:setAdmin',
+])
+
+// channels whose first argument is a server id/uuid — non-admins may only
+// touch servers they own
+const SERVER_ARG_CHANNELS = new Set([
+  'server:getConfig', 'server:removeConfig', 'server:status', 'server:history', 'server:tps',
+  'server:start', 'server:stop', 'server:kill', 'server:install', 'server:getLogs',
+  'stats:serverNetwork',
+  'wings:server:state', 'wings:server:power', 'wings:server:command', 'wings:server:logs',
+  'wings:server:files', 'wings:server:readFile', 'wings:server:writeFile', 'wings:server:deleteFile',
+  'wings:server:createFile', 'wings:server:createFolder', 'wings:server:uploadFile',
+  'wings:server:moveFile', 'wings:server:sync', 'wings:server:reinstall',
+  'wings:server:delete', 'wings:server:create',
+  'wings:ws-connect', 'wings:ws-disconnect', 'wings:ws-send',
+  'backup:list', 'backup:create', 'backup:update', 'backup:delete', 'backup:restore', 'backup:download',
+  'schedule:list', 'schedule:create',
+])
+
+function canAccessServer(user, serverId) {
+  if (!user) return false
+  if (user.admin) return true
+  const s = getServerByUuid(String(serverId ?? ''))
+  return !!s && s.ownerId === user.id
+}
+
 export const handlers = {
   // ---- app ----
   'app:version': async () => {
@@ -105,6 +140,41 @@ export const handlers = {
       execOut('docker info')
       return { running: true }
     } catch { return { running: false } }
+  },
+
+  // ---- user management (admin only) ----
+  'users:list': async () => {
+    const db = readDB()
+    return {
+      ok: true,
+      users: (db.users || []).map(u => ({ id: u.id, username: u.username, admin: !!u.admin, createdAt: u.createdAt })),
+    }
+  },
+  'users:create': async (payload) => registerUser(payload || {}),
+  'users:delete': async (id, ctx) => {
+    const db = readDB()
+    const target = (db.users || []).find(u => u.id === id)
+    if (!target) return { ok: false, error: 'Không tìm thấy người dùng' }
+    if (ctx?.user && target.id === ctx.user.id) return { ok: false, error: 'Không thể xóa chính mình' }
+    if (target.admin && (db.users || []).filter(u => u.admin).length <= 1) {
+      return { ok: false, error: 'Phải giữ lại ít nhất một quản trị viên' }
+    }
+    db.users = db.users.filter(u => u.id !== id)
+    db.sessions = (db.sessions || []).filter(s => s.userId !== id)
+    writeDB(db)
+    return { ok: true }
+  },
+  'users:setAdmin': async (id, admin) => {
+    const db = readDB()
+    const target = (db.users || []).find(u => u.id === id)
+    if (!target) return { ok: false, error: 'Không tìm thấy người dùng' }
+    const want = !!admin
+    if (target.admin && !want && (db.users || []).filter(u => u.admin).length <= 1) {
+      return { ok: false, error: 'Phải giữ lại ít nhất một quản trị viên' }
+    }
+    target.admin = want
+    writeDB(db)
+    return { ok: true, user: { id: target.id, username: target.username, admin: target.admin } }
   },
 
   // ---- system ----
@@ -225,14 +295,19 @@ export const handlers = {
   },
 
   // ---- servers ----
-  'server:getConfigs': async () => ({ ok: true, servers: listServerConfigs() }),
+  'server:getConfigs': async (ctx) => {
+    const user = ctx?.user
+    if (!user) return { ok: true, servers: [] }
+    const servers = listServerConfigs()
+    return { ok: true, servers: user.admin ? servers : servers.filter(s => s.ownerId === user.id) }
+  },
   'server:getConfig': async (serverId) => {
     const server = getServerByUuid(serverId)
     if (!server) return { ok: false, error: 'Not found' }
     return { ok: true, server }
   },
-  'server:addConfig': async (config) => {
-    const server = { id: generateUUID(), ...config, createdAt: new Date().toISOString() }
+  'server:addConfig': async (config, ctx) => {
+    const server = { id: generateUUID(), ...config, ownerId: ctx?.user?.id || null, createdAt: new Date().toISOString() }
     addServerConfig(server)
     return { ok: true, server }
   },
@@ -559,6 +634,16 @@ export async function invokeHandler(channel, args = [], ctx = {}) {
   const fn = handlers[channel]
   if (!fn) return { error: `Unknown channel: ${channel}` }
   try {
+    if (!ctx.user && ctx.token) {
+      const s = getSessionFromToken(ctx.token)
+      if (s) ctx.user = s.user
+    }
+    if (ADMIN_CHANNELS.has(channel) && !ctx.user?.admin) {
+      return { error: 'Chỉ quản trị viên mới thực hiện được thao tác này' }
+    }
+    if (SERVER_ARG_CHANNELS.has(channel) && !canAccessServer(ctx.user, args[0])) {
+      return { error: 'Không có quyền truy cập server này' }
+    }
     return await fn(...args, ctx)
   } catch (err) {
     return { error: err?.message || String(err) }

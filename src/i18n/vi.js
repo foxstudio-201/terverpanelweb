@@ -3,6 +3,9 @@ const vi = {
   'sidebar.settings': 'Cài đặt',
   'sidebar.logout': 'Đăng xuất',
   'sidebar.home': 'Trang chủ',
+  'sidebar.adminPanel': 'Bảng quản trị',
+  'sidebar.userView': 'Giao diện người dùng',
+  'sidebar.users': 'Người dùng',
 
   'login.title': 'TerverPanel',
   'login.subtitle': 'Gaming Hosting Launcher',

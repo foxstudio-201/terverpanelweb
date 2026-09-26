@@ -36,6 +36,24 @@ export function verifyPassword(password, stored) {
   }
 }
 
+// One-time migration: first registered user becomes admin (OOBE),
+// legacy servers (created before ownership) belong to the first admin.
+function migrate(db) {
+  if (!Array.isArray(db.users) || db.users.length === 0) return false
+  let changed = false
+  if (!db.users.some(u => 'admin' in u)) {
+    db.users[0].admin = true
+    changed = true
+  }
+  const owner = db.users.find(u => u.admin) || db.users[0]
+  if (Array.isArray(db.servers)) {
+    for (const s of db.servers) {
+      if (!s.ownerId) { s.ownerId = owner.id; changed = true }
+    }
+  }
+  return changed
+}
+
 export function readDB() {
   ensureAppDataDir()
   try {
@@ -44,7 +62,11 @@ export function readDB() {
       fs.writeFileSync(LOCAL_DB_FILE, JSON.stringify(initial, null, 2), { mode: 0o600 })
       return initial
     }
-    return JSON.parse(fs.readFileSync(LOCAL_DB_FILE, 'utf-8'))
+    const db = JSON.parse(fs.readFileSync(LOCAL_DB_FILE, 'utf-8'))
+    if (migrate(db)) {
+      fs.writeFileSync(LOCAL_DB_FILE, JSON.stringify(db, null, 2), { mode: 0o600 })
+    }
+    return db
   } catch {
     return { users: [], sessions: [], servers: [], settings: { appMode: 'advanced' }, schedules: [], backups: [] }
   }

@@ -113,6 +113,12 @@ const webApi = {
     return api('/api/auth/session')
   },
 
+  // user management (admin panel)
+  listUsers: () => invoke('users:list'),
+  createUser: (username, password) => invoke('users:create', { username, password }),
+  deleteUser: (id) => invoke('users:delete', id),
+  setUserAdmin: (id, admin) => invoke('users:setAdmin', id, admin),
+
   // rest — 1:1 with preload
   checkDocker: () => invoke('docker:check'),
   installDocker: () => invoke('docker:install'),
