@@ -268,11 +268,18 @@ allowed_mounts:
   - /home
   - $WINGS_DATA/servers
 docker:
+  socket: $DOCKER_SOCK
   network:
-    interface: wings0
-    name: lunarspace-net
-    mode: lunarspace-net
-    subnet: 172.18.0.0/16
+    interface: 172.22.0.1
+    name: tpweb-net
+    mode: tpweb-net
+    interfaces:
+      v4:
+        subnet: 172.22.0.0/16
+        gateway: 172.22.0.1
+      v6:
+        subnet: fdba:17c8:6c96::/64
+        gateway: fdba:17c8:6c96::1011
 EOF
   chmod 600 "$WINGS_CONFIG"
 else
