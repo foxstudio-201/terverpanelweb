@@ -132,7 +132,8 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=notify
-ExecStart=${DOCKERD_BIN} -H ${DOCKER_HOST_URL} --pidfile /run/terver-panel-docker/docker.pid --data-root ${DOCKER_DATA} --bridge=tpweb0 --bip=172.20.0.1/24
+ExecStartPre=/bin/bash -c 'ip link show tpweb0 >/dev/null 2>&1 || { ip link add tpweb0 type bridge && ip addr add 172.21.0.1/16 dev tpweb0; }; ip link set tpweb0 up'
+ExecStart=${DOCKERD_BIN} -H ${DOCKER_HOST_URL} --pidfile /run/terver-panel-docker/docker.pid --data-root ${DOCKER_DATA} --bridge=tpweb0 --default-address-pool=base=172.21.0.0/16,size=16
 ExecReload=/bin/kill -s HUP \$MAINPID
 Restart=on-failure
 RestartSec=2
