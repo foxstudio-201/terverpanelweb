@@ -423,7 +423,7 @@ export const handlers = {
       const yaml = (await import('js-yaml')).default
       const crypto = await import('crypto')
       const configDir = WINGS_CONFIG_DIR
-      const dataDir = '/var/lib/terver/wings'
+      const dataDir = '/var/lib/terver-panel-wings'
       const configPath = WINGS_CONFIG_PATH
       fs.mkdirSync(configDir, { recursive: true })
       for (const d of ['servers', 'logs', 'diffs', 'vmounts', 'archives', 'backups', 'tmp']) {

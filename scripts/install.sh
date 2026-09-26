@@ -15,7 +15,7 @@ WINGS_REPO="${WINGS_REPO:-foxstudio-201/lunarspacewinglunar}"
 WINGS_BIN="/usr/local/bin/wings"
 WINGS_CONFIG_DIR="${WINGS_CONFIG_DIR:-/etc/terver-panel-wings}"
 WINGS_CONFIG="$WINGS_CONFIG_DIR/config.yml"
-WINGS_DATA="${WINGS_DATA:-/var/lib/terver/wings}"
+WINGS_DATA="${WINGS_DATA:-/var/lib/terver-panel-wings}"
 WINGS_SERVICE="terver-panel-wings"
 WINGS_API_PORT="${WINGS_API_PORT:-8080}"
 
