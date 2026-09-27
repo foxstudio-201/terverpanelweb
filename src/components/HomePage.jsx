@@ -98,7 +98,8 @@ const GAME_ICONS = {
   terraria: './terraria_icon.png',
 }
 
-function GameModal({ game, theme, lang, onClose, onServerCreated }) {
+function GameModal({ game, theme, lang, onClose, onServerCreated, user }) {
+  const isAdmin = !!user?.admin
   const [closing, setClosing] = useState(false)
   const [eggs, setEggs] = useState([])
   const [selectedEgg, setSelectedEgg] = useState(null)
@@ -110,6 +111,15 @@ function GameModal({ game, theme, lang, onClose, onServerCreated }) {
   const [loadingEggs, setLoadingEggs] = useState(true)
   const [selectedDockerImage, setSelectedDockerImage] = useState('')
   const [resources, setResources] = useState(null)
+  const [ownerId, setOwnerId] = useState(user?.id || '')
+  const [ownerUsers, setOwnerUsers] = useState([])
+
+  useEffect(() => {
+    if (!isAdmin) return
+    window.electronAPI.listUsers().then((res) => {
+      if (res?.ok) setOwnerUsers(res.users || [])
+    }).catch(() => {})
+  }, [isAdmin])
   const [eggConfigVars, setEggConfigVars] = useState({})
   const [serverConfig, setServerConfig] = useState({ eula: true, onlineMode: true, motd: 'A Minecraft Server' })
   const textColor = theme === 'light' ? '#111' : '#fff'
@@ -259,6 +269,7 @@ function GameModal({ game, theme, lang, onClose, onServerCreated }) {
       eula: !!serverConfig.eula,
       onlineMode: !!serverConfig.onlineMode,
       motd: serverConfig.motd || '',
+      ...(isAdmin ? { ownerId: ownerId || user?.id } : {}),
       status: 'installing',
     }
     if (isElectron) {
@@ -536,6 +547,26 @@ function GameModal({ game, theme, lang, onClose, onServerCreated }) {
                 </div>
               </div>
 
+              {isAdmin && (
+                <Section title={lang === 'vi' ? 'Chủ sở hữu server' : 'Server owner'}>
+                  <select
+                    value={ownerId}
+                    onChange={(e) => setOwnerId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: textColor }}
+                  >
+                    {(ownerUsers.length > 0 ? ownerUsers : [{ id: user?.id, username: user?.username }]).map(u => (
+                      <option key={u.id} value={u.id} style={{ color: '#111' }}>
+                        {u.username}{u.admin ? (lang === 'vi' ? ' (quản trị)' : ' (admin)') : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] mt-1.5" style={{ color: labelColor }}>
+                    {lang === 'vi' ? 'Người dùng này sẽ thấy và quản lý server trong bảng của họ.' : 'This user will see and manage the server in their panel.'}
+                  </p>
+                </Section>
+              )}
+
               <Section title={t(lang, 'modal.serverName')}>
                 <input
                   value={serverName}
@@ -737,7 +768,8 @@ function ServerCard({ server, theme, lang, onStart, onStop, onRestart, onDelete,
   )
 }
 
-function HomePage({ theme, lang, onServerCreated, onSelectServer }) {
+function HomePage({ theme, lang, onServerCreated, onSelectServer, user }) {
+  const isAdmin = !!user?.admin
   const [activeTab, setActiveTab] = useState('servers')
   const [tabFade, setTabFade] = useState(true)
   const [prevTab, setPrevTab] = useState('servers')
@@ -993,16 +1025,18 @@ function HomePage({ theme, lang, onServerCreated, onSelectServer }) {
         >
           {lang === 'vi' ? 'Danh sách' : 'Servers'}
         </button>
-        <button
-          onClick={() => handleTabChange('server')}
-          className="px-5 py-2 rounded-xl text-sm font-semibold transition-all"
-          style={{
-            background: activeTab === 'server' ? 'rgba(167,139,250,0.15)' : 'transparent',
-            color: activeTab === 'server' ? '#a78bfa' : labelColor,
-          }}
-        >
-          {t(lang, 'home.serverGame') || 'Server Game'}
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => handleTabChange('server')}
+            className="px-5 py-2 rounded-xl text-sm font-semibold transition-all"
+            style={{
+              background: activeTab === 'server' ? 'rgba(167,139,250,0.15)' : 'transparent',
+              color: activeTab === 'server' ? '#a78bfa' : labelColor,
+            }}
+          >
+            {t(lang, 'home.serverGame') || 'Server Game'}
+          </button>
+        )}
         <button
           onClick={() => handleTabChange('minecraft')}
           className="px-5 py-2 rounded-xl text-sm font-semibold transition-all"
@@ -1025,7 +1059,11 @@ function HomePage({ theme, lang, onServerCreated, onSelectServer }) {
                 <p className="text-xs text-center py-12" style={{ color: labelColor }}>{t(lang, 'home.loading')}</p>
               ) : servers.length === 0 ? (
                 <div className="text-center py-16">
-                  <p className="text-sm" style={{ color: labelColor }}>{lang === 'vi' ? 'Chưa có server nào. Tạo server đầu tiên!' : 'No servers yet. Create your first server!'}</p>
+                  <p className="text-sm" style={{ color: labelColor }}>
+                    {isAdmin
+                      ? (lang === 'vi' ? 'Chưa có server nào. Tạo server đầu tiên!' : 'No servers yet. Create your first server!')
+                      : (lang === 'vi' ? 'Bạn chưa có server nào. Hãy liên hệ quản trị viên để được tạo server.' : "You don't have any servers yet. Ask an admin to create one for you.")}
+                  </p>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-4">
@@ -1048,7 +1086,7 @@ function HomePage({ theme, lang, onServerCreated, onSelectServer }) {
           </div>
         )}
 
-        {prevTab === 'server' && (
+        {prevTab === 'server' && isAdmin && (
           <div className="p-6">
             <div className="max-w-4xl mx-auto">
               <div className="grid grid-cols-2 gap-5">
@@ -1253,7 +1291,7 @@ function HomePage({ theme, lang, onServerCreated, onSelectServer }) {
       </div>
 
       {selectedGame && (
-        <GameModal game={selectedGame} theme={theme} lang={lang} onClose={() => setSelectedGame(null)} onServerCreated={() => { onServerCreated?.(); setServerRefreshKey(k => k + 1) }} />
+        <GameModal game={selectedGame} theme={theme} lang={lang} user={user} onClose={() => setSelectedGame(null)} onServerCreated={() => { onServerCreated?.(); setServerRefreshKey(k => k + 1) }} />
       )}
 
       {showChangelogModal && changelog?.content && (

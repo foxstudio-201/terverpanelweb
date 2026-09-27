@@ -481,7 +481,7 @@ function AppContent() {
 
         <div className="flex-1 ml-[180px] overflow-hidden">
           <div className={`h-full ${transitionClass}`}>
-            {safePage === 'servers' && <HomePage theme={theme} lang={lang} onServerCreated={refreshSidebarServers} onSelectServer={handleSelectServer} />}
+            {safePage === 'servers' && <HomePage theme={theme} lang={lang} user={displaySession?.user} onServerCreated={refreshSidebarServers} onSelectServer={handleSelectServer} />}
             {safePage === 'donate' && <DonatePage theme={theme} lang={lang} />}
             {safePage === 'docker' && !isBasic && isAdmin && <NodePage theme={theme} lang={lang} />}
             {safePage === 'users' && isAdmin && <AdminUsersPage theme={theme} lang={lang} currentUser={displaySession?.user} />}

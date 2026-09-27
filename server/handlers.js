@@ -72,6 +72,7 @@ function fetchJson(url, timeout = 10000) {
 
 // ---- admin / ownership guards (Calagopus-style admin vs user panels) ----
 const ADMIN_CHANNELS = new Set([
+  'server:addConfig',
   'docker:config:get', 'docker:config:save', 'docker:install', 'docker:start', 'docker:stop',
   'wings:install', 'wings:start', 'wings:stop', 'wings:config:generate',
   'systemd:status', 'systemd:start', 'systemd:stop', 'systemd:logs',
@@ -307,7 +308,12 @@ export const handlers = {
     return { ok: true, server }
   },
   'server:addConfig': async (config, ctx) => {
-    const server = { id: generateUUID(), ...config, ownerId: ctx?.user?.id || null, createdAt: new Date().toISOString() }
+    // Calagopus-style: only admins create servers, and they choose the owner
+    if (!ctx?.user?.admin) return { ok: false, error: 'Chỉ quản trị viên mới tạo server' }
+    const ownerId = config?.ownerId || ctx.user.id
+    const owner = (readDB().users || []).find(u => u.id === ownerId)
+    if (!owner) return { ok: false, error: 'Chủ sở hữu server không tồn tại' }
+    const server = { id: generateUUID(), ...config, ownerId: owner.id, createdAt: new Date().toISOString() }
     addServerConfig(server)
     return { ok: true, server }
   },
