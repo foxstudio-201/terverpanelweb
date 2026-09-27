@@ -314,13 +314,21 @@ export async function ensureRemoteEula(uuid) {
   } catch {}
 }
 
+// Wings GET /logs responds text/plain (raw log lines) — not JSON.
 export async function getWingsLogs(uuid, lines = 200) {
   const url = `${WINGS_BASE}/api/servers/${uuid}/logs?lines=${lines}`
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${wingsApiToken}` },
   })
   if (!res.ok) throw new Error(`logs ${res.status}`)
-  return res.json()
+  const text = await res.text()
+  let logs = text
+  try {
+    const j = JSON.parse(text)
+    if (typeof j === 'string') logs = j
+    else if (typeof j?.logs === 'string') logs = j.logs
+  } catch {}
+  return { ok: true, logs }
 }
 
 export async function reinstallServer(uuid) {

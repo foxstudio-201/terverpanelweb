@@ -940,7 +940,9 @@ export const handlers = {
       return { ok: false, error: err.message }
     }
   },
-  'server:getLogs': async (serverId) => getWingsLogs(serverId, 500),
+  // wings HTTP logs are surfaced via wings:server:logs (string). Web edition
+  // has no persisted per-server console log store — return an empty history.
+  'server:getLogs': async () => ({ ok: true, logs: [] }),
 
   // ---- docker ----
   'docker:check': async () => {
@@ -1182,7 +1184,9 @@ WantedBy=multi-user.target
   'wings:server:create': async (uuid) => createServerRemote(uuid),
   'wings:ws-connect': async () => ({ ok: true }),
   'wings:ws-disconnect': async () => ({ ok: true }),
-  'wings:ws-send': async () => ({ ok: true }),
+  // no persistent wings WS relay in web edition — report not-sent so the
+  // console falls back to the HTTP /commands API (wings:server:command)
+  'wings:ws-send': async () => ({ ok: false, error: 'WS relay not available' }),
   'wings:ws-status': async () => ({ ok: true, connected: false, authenticated: false }),
 
   // ---- stats ----
