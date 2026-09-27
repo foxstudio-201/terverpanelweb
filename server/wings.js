@@ -249,9 +249,9 @@ export async function writeWingsFile(uuid, filePath, content) {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${wingsApiToken}`,
-      'Content-Type': 'application/json',
+      'Content-Type': 'text/plain; charset=utf-8',
     },
-    body: JSON.stringify({ content, encoding: 'utf-8' }),
+    body: typeof content === 'string' ? content : String(content ?? ''),
   })
   if (!res.ok) throw new Error(`files/write ${res.status}`)
   return res.json().catch(() => ({ success: true }))
@@ -272,36 +272,35 @@ export async function deleteWingsPath(uuid, targetPath) {
 }
 
 export async function createWingsFolder(uuid, dirPath, name) {
-  const rel = path.posix.join(dirPath || '/', name)
-  const url = `${WINGS_BASE}/api/servers/${uuid}/files/create-folder?file=${encodeURIComponent(rel)}`
+  const url = `${WINGS_BASE}/api/servers/${uuid}/files/create-directory`
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${wingsApiToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ root: dirPath || '/', name }),
   })
-  if (!res.ok) throw new Error(`files/create-folder ${res.status}`)
+  if (!res.ok) throw new Error(`files/create-directory ${res.status}`)
   return res.json().catch(() => ({ success: true }))
 }
 
 export async function renameWingsPath(uuid, from, to) {
   const url = `${WINGS_BASE}/api/servers/${uuid}/files/rename`
   const res = await fetch(url, {
-    method: 'POST',
+    method: 'PUT',
     headers: {
       Authorization: `Bearer ${wingsApiToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ from, to }),
+    body: JSON.stringify({ files: [{ from, to }] }),
   })
   if (!res.ok) throw new Error(`files/rename ${res.status}`)
   return res.json().catch(() => ({ success: true }))
 }
 
 export async function sendWingsCommand(uuid, command) {
-  const data = await wingsApiCall('POST', `/api/servers/${uuid}/command`, { command })
+  const data = await wingsApiCall('POST', `/api/servers/${uuid}/commands`, { commands: [command] })
   return { ok: true, data }
 }
 
