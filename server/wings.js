@@ -160,6 +160,7 @@ export function getRemoteServers() {
 export async function powerServer(uuid, action) {
   const server = getServerByUuid(uuid)
   if (!server) return { ok: false, error: 'Server not found' }
+  if (action === 'start' || action === 'restart') await ensureRemoteEula(uuid)
   try {
     const data = await wingsApiCall('POST', `/api/servers/${uuid}/power`, { action, wait_seconds: 0 })
     if (action === 'start' || action === 'restart') {
@@ -302,6 +303,16 @@ export async function renameWingsPath(uuid, from, to) {
 export async function sendWingsCommand(uuid, command) {
   const data = await wingsApiCall('POST', `/api/servers/${uuid}/command`, { command })
   return { ok: true, data }
+}
+
+// Minecraft refuses to boot without eula.txt — write it when the user accepted
+// the EULA at creation (server.eula, default true; only an explicit false skips).
+export async function ensureRemoteEula(uuid) {
+  try {
+    const server = getServerByUuid(uuid)
+    if (!server || server.eula === false) return
+    await writeWingsFile(uuid, '/eula.txt', 'eula=true\n')
+  } catch {}
 }
 
 export async function getWingsLogs(uuid, lines = 200) {

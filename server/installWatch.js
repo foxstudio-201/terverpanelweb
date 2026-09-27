@@ -1,6 +1,6 @@
 import WebSocket from 'ws'
 import jwt from 'jsonwebtoken'
-import { getWingsRemoteToken } from './wings.js'
+import { getWingsRemoteToken, ensureRemoteEula } from './wings.js'
 import { updateServerConfig } from './db.js'
 
 const WINGS_WS_BASE = process.env.WINGS_WS_URL || 'ws://127.0.0.1:8080'
@@ -67,6 +67,7 @@ export function markInstallFinished(uuid, ok, message, broadcast) {
     if (ok) updateServerConfig(uuid, { status: 'stopped', installedAt: new Date().toISOString(), installError: null })
     else updateServerConfig(uuid, { status: 'error', installError: message })
   } catch {}
+  if (ok) ensureRemoteEula(uuid)
   try { broadcast?.('server:progress', { serverId: uuid, percent: ok ? 100 : 0, message }) } catch {}
 }
 
@@ -82,6 +83,7 @@ function finish(w, ok, message) {
     if (ok) updateServerConfig(w.uuid, { status: 'stopped', installedAt: new Date().toISOString(), installError: null })
     else updateServerConfig(w.uuid, { status: 'error', installError: message })
   } catch {}
+  if (ok) ensureRemoteEula(w.uuid)
   progress(w, ok ? 100 : 0, message)
 }
 
