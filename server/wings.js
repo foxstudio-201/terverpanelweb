@@ -40,7 +40,7 @@ export async function wingsApiCall(method, endpoint, body) {
   const url = `${WINGS_BASE}${endpoint}`
   const headers = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${wingsApiTokenId}.${wingsApiToken}`,
+    Authorization: `Bearer ${wingsApiToken}`,
   }
   const res = await fetch(url, {
     method,
@@ -203,6 +203,9 @@ export async function getServerState(uuid) {
 export async function getStatus(uuid) {
   const server = getServerByUuid(uuid)
   if (!server) return { ok: false, error: 'Server not found' }
+  if (server.status === 'installing') {
+    return { ok: true, status: 'installing', resources: server.resources_usage || {}, tps: server.lastTps ?? null }
+  }
   try {
     const data = await wingsApiCall('GET', `/api/servers/${uuid}`)
     const state = data?.state || 'offline'
@@ -224,7 +227,7 @@ export async function getStatus(uuid) {
 export async function listWingsFiles(uuid, dirPath) {
   const url = `${WINGS_BASE}/api/servers/${uuid}/files/list?directory=${encodeURIComponent(dirPath || '/')}&per_page=500&page=1`
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${wingsApiTokenId}.${wingsApiToken}` },
+    headers: { Authorization: `Bearer ${wingsApiToken}` },
   })
   if (!res.ok) throw new Error(`files/list ${res.status}`)
   return res.json()
@@ -233,7 +236,7 @@ export async function listWingsFiles(uuid, dirPath) {
 export async function readWingsFile(uuid, filePath) {
   const url = `${WINGS_BASE}/api/servers/${uuid}/files/contents?file=${encodeURIComponent(filePath)}&download=false`
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${wingsApiTokenId}.${wingsApiToken}` },
+    headers: { Authorization: `Bearer ${wingsApiToken}` },
   })
   if (!res.ok) throw new Error(`files/contents ${res.status}`)
   return res.text()
@@ -244,7 +247,7 @@ export async function writeWingsFile(uuid, filePath, content) {
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${wingsApiTokenId}.${wingsApiToken}`,
+      Authorization: `Bearer ${wingsApiToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ content, encoding: 'utf-8' }),
@@ -258,7 +261,7 @@ export async function deleteWingsPath(uuid, targetPath) {
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${wingsApiTokenId}.${wingsApiToken}`,
+      Authorization: `Bearer ${wingsApiToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ files: [targetPath] }),
@@ -273,7 +276,7 @@ export async function createWingsFolder(uuid, dirPath, name) {
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${wingsApiTokenId}.${wingsApiToken}`,
+      Authorization: `Bearer ${wingsApiToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ name }),
@@ -287,7 +290,7 @@ export async function renameWingsPath(uuid, from, to) {
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${wingsApiTokenId}.${wingsApiToken}`,
+      Authorization: `Bearer ${wingsApiToken}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ from, to }),
@@ -304,7 +307,7 @@ export async function sendWingsCommand(uuid, command) {
 export async function getWingsLogs(uuid, lines = 200) {
   const url = `${WINGS_BASE}/api/servers/${uuid}/logs?lines=${lines}`
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${wingsApiTokenId}.${wingsApiToken}` },
+    headers: { Authorization: `Bearer ${wingsApiToken}` },
   })
   if (!res.ok) throw new Error(`logs ${res.status}`)
   return res.json()
@@ -312,8 +315,8 @@ export async function getWingsLogs(uuid, lines = 200) {
 
 export async function reinstallServer(uuid) {
   try {
-    const data = await wingsApiCall('POST', `/api/servers/${uuid}/reinstall`, {})
-    updateServerConfig(uuid, { status: 'installing' })
+    const data = await wingsApiCall('POST', `/api/servers/${uuid}/reinstall`, { truncate_directory: true })
+    updateServerConfig(uuid, { status: 'installing', installError: null })
     return { ok: true, data }
   } catch (err) {
     return { ok: false, error: err.message }
@@ -331,7 +334,7 @@ export async function deleteServerRemote(uuid) {
 
 export async function createServerRemote(uuid) {
   try {
-    const data = await wingsApiCall('POST', `/api/servers/${uuid}/create`, {})
+    const data = await wingsApiCall('POST', '/api/servers', { uuid, start_on_completion: false })
     return { ok: true, data }
   } catch (err) {
     return { ok: false, error: err.message }
@@ -347,5 +350,35 @@ export async function syncServerConfig(uuid) {
     return { ok: true, data }
   } catch (err) {
     return { ok: false, error: err.message }
+  }
+}
+
+// Build wings InstallationScript { container_image, entrypoint, script, environment }
+// from the egg's scripts.installation + egg variable defaults (server config wins).
+export function buildInstallationScript(server) {
+  if (!server) return null
+  try {
+    const parts = String(server.eggId || '').split('/')
+    if (parts.length < 2) return null
+    const eggPath = path.join(EGGS_DIR, parts[0], parts[1] + '.json')
+    if (!fs.existsSync(eggPath)) return null
+    const egg = JSON.parse(fs.readFileSync(eggPath, 'utf8'))
+    const inst = egg?.scripts?.installation
+    if (!inst?.script) return null
+    const env = {}
+    for (const v of egg.variables || []) {
+      const name = v.env_variable
+      if (!name) continue
+      const fromServer = server.config?.[name]
+      env[name] = (fromServer !== undefined && fromServer !== null && fromServer !== '') ? String(fromServer) : String(v.default_value ?? '')
+    }
+    return {
+      container_image: inst.container || 'ghcr.io/pelican-eggs/installers:alpine',
+      entrypoint: inst.entrypoint || 'ash',
+      script: inst.script,
+      environment: env,
+    }
+  } catch {
+    return null
   }
 }

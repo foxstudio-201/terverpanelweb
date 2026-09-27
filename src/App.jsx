@@ -672,7 +672,7 @@ function AppContent() {
             {safePage === 'snippets' && <SnippetsPage theme={theme} lang={lang} />}
             {safePage === 'sshkeys' && <SshKeysPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
             {safePage === 'securitykeys' && <SecurityKeysPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
-            {safePage === 'settings' && <SettingsPage theme={theme} lang={lang} onAppModeChange={setAppMode} appMode={appMode} />}
+            {safePage === 'settings' && <SettingsPage theme={theme} lang={lang} />}
             {isInServerPanel && selectedSidebarServer && (
               <ServerPanel key={selectedSidebarServer.id} server={selectedSidebarServer} theme={theme} lang={lang} displayPage={displayPage} onBack={handleBackFromServer} onServerDeleted={refreshSidebarServers} onServerUpdate={(srv) => setSelectedSidebarServer(srv)} />
             )}

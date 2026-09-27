@@ -6,10 +6,11 @@ import { WebSocketServer } from 'ws'
 import cors from 'cors'
 import { fileURLToPath } from 'url'
 import { authMiddleware, registerUser, loginUser, logoutUser, getSessionFromToken, hasUsers } from './auth.js'
-import { readSettings, writeSettings, ensureAppDataDir, APP_DATA_DIR } from './db.js'
+import { readSettings, writeSettings, ensureAppDataDir, APP_DATA_DIR, getServerByUuid } from './db.js'
 import { invokeHandler } from './handlers.js'
 import applicationApi from './applicationApi.js'
-import { getRemoteServers, getWingsRemoteToken } from './wings.js'
+import { getRemoteServers, getWingsRemoteToken, buildInstallationScript } from './wings.js'
+import { markInstallFinished } from './installWatch.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -136,11 +137,26 @@ app.post('/api/remote/servers/reset', remoteAuth, (req, res) => {
 })
 
 app.post('/api/remote/servers/:uuid/install', remoteAuth, (req, res) => {
+  const body = req.body || {}
+  console.log(`[remote] install status ${req.params.uuid}: ${JSON.stringify(body)}`)
+  const s = String(body.status || body.state || body.install_status || '').toLowerCase()
+  const fail = body.successful === false || body.success === false || !!body.error ||
+    ['failed', 'fail', 'error', 'failure'].includes(s)
+  const ok = body.successful === true || body.success === true ||
+    ['success', 'succeeded', 'complete', 'completed', 'finished', 'done', 'installed'].includes(s)
+  if (fail) markInstallFinished(req.params.uuid, false, String(body.error || body.message || 'Cài đặt thất bại'), broadcast)
+  else if (ok) markInstallFinished(req.params.uuid, true, 'Cài đặt hoàn tất! Server đã sẵn sàng.', broadcast)
   res.json({ data: { done: true } })
 })
 
+// Wings fetches the egg install script here during installation.
+// Wings deserializes the body as InstallationScript {container_image, entrypoint, script, environment}
+// — serve it at root level (and under `data` for wrapper-shaped parsers).
 app.get('/api/remote/servers/:uuid/install', remoteAuth, (req, res) => {
-  res.json({ data: { script: '', container: '', entrypoint: '' } })
+  const server = getServerByUuid(req.params.uuid)
+  const script = server ? buildInstallationScript(server) : null
+  if (!script) return res.status(404).json({ error: 'No install script for server', errors: [] })
+  res.json({ ...script, data: script })
 })
 
 app.post('/api/remote/activity', remoteAuth, (req, res) => res.json({ ok: true }))

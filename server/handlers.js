@@ -16,6 +16,7 @@ import {
   createWingsFolder, renameWingsPath, sendWingsCommand, getWingsLogs,
   reinstallServer, deleteServerRemote, createServerRemote, syncServerConfig,
 } from './wings.js'
+import { hasInstallWatch, startInstallWatch } from './installWatch.js'
 import { readDB, writeDB } from './db.js'
 
 function execOut(cmd, timeout = 5000) {
@@ -917,14 +918,25 @@ export const handlers = {
   'server:start': async (serverId) => powerServer(serverId, 'start'),
   'server:stop': async (serverId) => powerServer(serverId, 'stop'),
   'server:kill': async (serverId) => powerServer(serverId, 'kill'),
-  'server:install': async (serverId) => {
-    updateServerConfig(serverId, { status: 'installing' })
+  'server:install': async (serverId, ctx) => {
+    const server = getServerByUuid(serverId)
+    if (!server) return { ok: false, error: 'Server not found' }
+    if (hasInstallWatch(serverId)) return { ok: true, already: true }
+    const bc = (type, data) => { try { ctx?.broadcast?.(type, data) } catch {} }
+    updateServerConfig(serverId, { status: 'installing', installError: null })
+    bc('server:progress', { serverId, percent: 2, message: 'Đang chuẩn bị cài đặt...' })
     try {
-      await createServerRemote(serverId)
-      await syncServerConfig(serverId)
+      const state = await getServerState(serverId)
+      let res = state.ok ? await reinstallServer(serverId) : await createServerRemote(serverId)
+      if (!res.ok) {
+        res = state.ok ? await createServerRemote(serverId) : await reinstallServer(serverId)
+      }
+      if (!res.ok) throw new Error(res.error || 'Không khởi động được cài đặt trên Wings')
+      startInstallWatch(serverId, bc)
       return { ok: true }
     } catch (err) {
       updateServerConfig(serverId, { status: 'error', installError: err.message })
+      bc('server:progress', { serverId, percent: 0, message: 'Cài đặt thất bại: ' + err.message })
       return { ok: false, error: err.message }
     }
   },
@@ -1150,7 +1162,10 @@ WantedBy=multi-user.target
   'wings:server:power': async (uuid, action) => powerServer(uuid, action),
   'wings:server:command': async (uuid, command) => sendWingsCommand(uuid, command),
   'wings:server:logs': async (uuid, lines) => getWingsLogs(uuid, lines || 200),
-  'wings:server:files': async (uuid, dirPath) => listWingsFiles(uuid, dirPath || '/'),
+  'wings:server:files': async (uuid, dirPath) => {
+    if (!uuid || uuid === 'null' || uuid === 'undefined') return { ok: false, error: 'Chưa chọn server' }
+    return listWingsFiles(uuid, dirPath || '/')
+  },
   'wings:server:readFile': async (uuid, filePath) => ({ ok: true, content: await readWingsFile(uuid, filePath) }),
   'wings:server:writeFile': async (uuid, filePath, content) => ({ ok: true, data: await writeWingsFile(uuid, filePath, content) }),
   'wings:server:deleteFile': async (uuid, targetPath) => ({ ok: true, data: await deleteWingsPath(uuid, targetPath) }),

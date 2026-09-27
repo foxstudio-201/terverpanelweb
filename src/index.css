@@ -193,3 +193,35 @@
 .server-name-marquee:hover {
   animation: marquee 4s ease-in-out infinite;
 }
+
+/* ── Native <select> dropdowns: consistent dark styling ── */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%239ca3af' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px !important;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  color-scheme: dark;
+}
+[data-theme='light'] select {
+  color-scheme: light;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+select:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.35);
+}
+select option {
+  background: #171717;
+  color: #fff;
+}
+[data-theme='light'] select option {
+  background: #fff;
+  color: #111;
+}
+
