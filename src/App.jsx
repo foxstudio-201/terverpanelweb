@@ -1,18 +1,21 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { AppProvider, useApp } from './i18n/AppContext'
 import { t } from './i18n/translations'
-import { House, Gear, Heart, Cube, List, Terminal, Files, Database, Clock, Users, Archive, Network, Play, GearSix, ArrowLeft, ChartLineUp, ShieldCheck, Key } from '@phosphor-icons/react'
+import { House, Gear, Heart, Cube, List, Terminal, Files, Database, Clock, Users, Archive, Network, Play, GearSix, ArrowLeft, ChartLineUp, ShieldCheck, Key, UserCircle, ChartBar, HardDrives } from '@phosphor-icons/react'
 import TitleBar from './components/TitleBar'
 import CloseModal from './components/CloseModal'
-import ModeSelectModal from './components/ModeSelectModal'
 import TooltipProvider from './components/ui/TooltipProvider'
 import ToastHost from './components/ui/ToastHost'
 import NodePage from './components/NodePage'
 import LoginPage from './components/LoginPage'
+import SetupWizard from './components/SetupWizard'
 import HomePage from './components/HomePage'
 import DonatePage from './components/DonatePage'
 import SettingsPage from './components/SettingsPage'
+import AccountPage from './components/AccountPage'
 import AdminUsersPage from './components/AdminUsersPage'
+import AdminHomePage from './components/AdminHomePage'
+import AdminServersPage from './components/AdminServersPage'
 import ApiKeysPage from './components/ApiKeysPage'
 import ServerPanel from './components/server/ServerPanel'
 
@@ -42,7 +45,8 @@ const SERVER_PANEL_PAGES = [
   { key: 'server-settings', icon: GearSix, label: 'Settings', labelVi: 'Cài đặt' },
 ]
 
-const ADMIN_PAGES = ['docker', 'users', 'api']
+// pages only admins may open — api is intentionally NOT here (users manage their own keys)
+const ADMIN_PAGES = ['admin-home', 'docker', 'servers-admin', 'users']
 
 function AppContent() {
   const { lang, theme } = useApp()
@@ -52,9 +56,9 @@ function AppContent() {
   const [version, setVersion] = useState('')
   const [dockerToast, setDockerToast] = useState(null)
   const [appMode, setAppMode] = useState('')
-  const [modeLoaded, setModeLoaded] = useState(false)
 
   const [phase, setPhase] = useState('startup-spinner')
+  const [needsSetup, setNeedsSetup] = useState(false)
   const [displaySession, setDisplaySession] = useState(null)
   const [displayPage, setDisplayPage] = useState('servers')
   const [viewMode, setViewMode] = useState('user')
@@ -71,9 +75,8 @@ function AppContent() {
   const isAdmin = !!displaySession?.user?.admin
 
   useEffect(() => {
-    // Web edition: force advanced mode, skip ModeSelectModal
+    // Web edition: force advanced mode
     setAppMode('advanced')
-    setModeLoaded(true)
   }, [])
 
   useEffect(() => {
@@ -82,6 +85,18 @@ function AppContent() {
         startupDone.current = true
         setPhase('idle')
         return
+      }
+      // First run: no users yet → full-screen setup wizard (Calagopus-style OOBE)
+      if (isWeb) {
+        try {
+          const oobe = await window.electronAPI.getOOBE()
+          if (oobe?.needsSetup) {
+            setNeedsSetup(true)
+            startupDone.current = true
+            setPhase('idle')
+            return
+          }
+        } catch {}
       }
       window.electronAPI.getVersion().then(setVersion).catch(() => {})
       const settings = await window.electronAPI.getSettings()
@@ -98,8 +113,8 @@ function AppContent() {
         setDisplaySession(result)
         const admin = !!result?.user?.admin
         setViewMode(admin ? 'admin' : 'user')
-        setActivePage(admin ? 'docker' : 'servers')
-        setDisplayPage(admin ? 'docker' : 'servers')
+        setActivePage(admin ? 'admin-home' : 'servers')
+        setDisplayPage(admin ? 'admin-home' : 'servers')
         setPhase('startup-spinner')
         setTimeout(() => {
           setPhase('fading-in')
@@ -169,7 +184,7 @@ function AppContent() {
     setShowServerDropdown(false)
     setViewMode(mode)
     if (mode === 'admin') {
-      navigateTo(ADMIN_PAGES.includes(activePage) ? activePage : 'docker')
+      navigateTo(ADMIN_PAGES.includes(activePage) ? activePage : 'admin-home')
     } else {
       navigateTo('servers')
     }
@@ -187,14 +202,15 @@ function AppContent() {
   }
 
   const handleLogin = (data) => {
+    setNeedsSetup(false)
     setPhase('fading-out')
     setTimeout(() => {
       setSession(data)
       setDisplaySession(data)
       const admin = !!data?.user?.admin
       setViewMode(admin ? 'admin' : 'user')
-      setActivePage(admin ? 'docker' : 'servers')
-      setDisplayPage(admin ? 'docker' : 'servers')
+      setActivePage(admin ? 'admin-home' : 'servers')
+      setDisplayPage(admin ? 'admin-home' : 'servers')
       setPhase('login-spinner')
       setTimeout(() => {
         setPhase('fading-in')
@@ -246,6 +262,13 @@ function AppContent() {
       return <Spinner theme={theme} lang={lang} text={t(lang, 'transition.loggingOut')} />
     }
     if (!displaySession) {
+      if (needsSetup) {
+        return (
+          <div className="flex-1 flex items-center justify-center overflow-hidden">
+            <SetupWizard onDone={handleLogin} />
+          </div>
+        )
+      }
       return (
         <div className="flex-1 flex items-center justify-center overflow-hidden">
           <div className={transitionClass}>
@@ -391,39 +414,67 @@ function AppContent() {
                 <div className="w-full h-px my-1" style={{ background: borderColor }} />
 
                 <button
-                  onClick={() => navigateTo('docker')}
+                  onClick={() => navigateTo('admin-home')}
                   className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'admin-home' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'admin-home' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <ChartBar size={18} weight="duotone" />
+                  <span className="text-xs font-medium">{lang === 'vi' ? 'Tổng quan' : 'Home'}</span>
+                </button>
+
+                <p className="text-[9px] font-bold uppercase tracking-wider px-3 pt-3 pb-1" style={{ color: labelColor }}>
+                  {lang === 'vi' ? 'Hạ tầng' : 'Infrastructure'}
+                </p>
+                <button
+                  onClick={() => navigateTo('docker')}
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
                   style={{
                     background: activePage === 'docker' ? 'rgba(167,139,250,0.12)' : 'transparent',
                     color: activePage === 'docker' ? '#a78bfa' : labelColor,
                   }}
                 >
-                  <Cube size={18} weight="duotone" />
-                  <span className="text-xs font-medium">{lang === 'vi' ? 'Quản lý Node' : 'Node'}</span>
+                  <Cube size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">{lang === 'vi' ? 'Quản lý Node' : 'Node'}</span>
+                </button>
+                <button
+                  onClick={() => navigateTo('servers-admin')}
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'servers-admin' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'servers-admin' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <HardDrives size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">{lang === 'vi' ? 'Tất cả server' : 'Servers'}</span>
                 </button>
 
+                <p className="text-[9px] font-bold uppercase tracking-wider px-3 pt-3 pb-1" style={{ color: labelColor }}>
+                  {lang === 'vi' ? 'Người dùng & Quyền' : 'Users & Access'}
+                </p>
                 <button
                   onClick={() => navigateTo('users')}
-                  className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
                   style={{
                     background: activePage === 'users' ? 'rgba(167,139,250,0.12)' : 'transparent',
                     color: activePage === 'users' ? '#a78bfa' : labelColor,
                   }}
                 >
-                  <Users size={18} weight="duotone" />
-                  <span className="text-xs font-medium">{t(lang, 'sidebar.users')}</span>
+                  <Users size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">{t(lang, 'sidebar.users')}</span>
                 </button>
-
                 <button
                   onClick={() => navigateTo('api')}
-                  className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
                   style={{
                     background: activePage === 'api' ? 'rgba(167,139,250,0.12)' : 'transparent',
                     color: activePage === 'api' ? '#a78bfa' : labelColor,
                   }}
                 >
-                  <Key size={18} weight="duotone" />
-                  <span className="text-xs font-medium">API</span>
+                  <Key size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">API Keys</span>
                 </button>
               </>
             ) : (
@@ -452,6 +503,18 @@ function AppContent() {
                   <span className="text-xs font-medium">{t(lang, 'home.donate')}</span>
                 </button>
 
+                <button
+                  onClick={() => navigateTo('api')}
+                  className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'api' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'api' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <Key size={18} weight="duotone" />
+                  <span className="text-xs font-medium">API Keys</span>
+                </button>
+
                 {isAdmin && (
                   <button
                     onClick={() => switchViewMode('admin')}
@@ -470,6 +533,18 @@ function AppContent() {
           </div>
 
           <div className="shrink-0 w-full flex flex-col items-center gap-2 pb-1 px-2">
+            <button
+              onClick={() => navigateTo('account')}
+              className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+              style={{
+                background: activePage === 'account' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                color: activePage === 'account' ? '#a78bfa' : labelColor,
+              }}
+            >
+              <UserCircle size={18} weight="duotone" />
+              <span className="text-xs font-medium">{lang === 'vi' ? 'Tài khoản' : 'Account'}</span>
+            </button>
+
             <button
               onClick={() => navigateTo('settings')}
               className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
@@ -496,9 +571,12 @@ function AppContent() {
           <div className={`h-full ${transitionClass}`}>
             {safePage === 'servers' && <HomePage theme={theme} lang={lang} user={displaySession?.user} onServerCreated={refreshSidebarServers} onSelectServer={handleSelectServer} />}
             {safePage === 'donate' && <DonatePage theme={theme} lang={lang} />}
+            {safePage === 'account' && <AccountPage theme={theme} lang={lang} user={displaySession?.user} onLogout={handleLogout} />}
+            {safePage === 'admin-home' && isAdmin && <AdminHomePage theme={theme} lang={lang} onNavigate={navigateTo} />}
             {safePage === 'docker' && !isBasic && isAdmin && <NodePage theme={theme} lang={lang} />}
+            {safePage === 'servers-admin' && isAdmin && <AdminServersPage theme={theme} lang={lang} onSelectServer={handleSelectServer} />}
             {safePage === 'users' && isAdmin && <AdminUsersPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
-            {safePage === 'api' && isAdmin && <ApiKeysPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
+            {safePage === 'api' && <ApiKeysPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
             {safePage === 'settings' && <SettingsPage theme={theme} lang={lang} onAppModeChange={setAppMode} appMode={appMode} />}
             {isInServerPanel && selectedSidebarServer && (
               <ServerPanel key={selectedSidebarServer.id} server={selectedSidebarServer} theme={theme} lang={lang} displayPage={displayPage} onBack={handleBackFromServer} onServerDeleted={refreshSidebarServers} onServerUpdate={(srv) => setSelectedSidebarServer(srv)} />
@@ -549,9 +627,6 @@ function AppContent() {
       {renderContent()}
       {showCloseModal && (
         <CloseModal onClose={() => setShowCloseModal(false)} />
-      )}
-      {modeLoaded && !appMode && !isWeb && (
-        <ModeSelectModal onChosen={(mode) => setAppMode(mode)} />
       )}
       <TooltipProvider />
     </div>

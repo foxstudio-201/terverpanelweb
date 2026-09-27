@@ -228,6 +228,20 @@ const en = {
   'schedule.emptyHint': 'Create cron + multi-step: command, power, backup',
   'schedule.save': 'Save',
   'schedule.cancel': 'Cancel',
+  'setup.title': 'Set up Terver Panel',
+  'setup.subtitle': 'Create your admin account and prepare the node',
+  'setup.step.account': 'Account',
+  'setup.step.node': 'Node',
+  'setup.step.done': 'Done',
+  'setup.adminAccount': 'Administrator account',
+  'setup.adminHint': 'First-time setup — this account becomes the administrator.',
+  'setup.next': 'Continue',
+  'setup.install': 'Install',
+  'setup.panel': 'Terver Panel',
+  'setup.refresh': 'Recheck',
+  'setup.skip': 'Skip',
+  'setup.done.title': 'Setup complete!',
+  'setup.finish': 'Open the dashboard',
 }
 
 export default en

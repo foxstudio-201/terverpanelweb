@@ -170,28 +170,8 @@ function NodePage({ theme, lang }) {
 
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmData, setConfirmData] = useState({ title: '', message: '', action: null })
-  const [firstTimeOpen, setFirstTimeOpen] = useState(false)
-  const [hasPaths, setHasPaths] = useState(false)
 
-  const [wizardOpen, setWizardOpen] = useState(false)
-  const [wizardStep, setWizardStep] = useState(0)
-  const [wizardDockerLog, setWizardDockerLog] = useState('')
-  const [wizardWingsLog, setWizardWingsLog] = useState('')
-  const [wizardCfLog, setWizardCfLog] = useState('')
-  const [wizardProcessing, setWizardProcessing] = useState(false)
   const [wingsConfig, setWingsConfig] = useState({})
-  const [wizardPaths, setWizardPaths] = useState({
-    base: '',
-    docker: '',
-    wings: '',
-    wingsConfig: '',
-    cloudflare: '',
-    database: '',
-    downloads: '',
-    servers: '',
-    logs: '',
-  })
-  const [allInstalled, setAllInstalled] = useState(false)
 
   const addToast = (message, type = 'ok') => {
     const id = ++toastIdRef.current
@@ -233,18 +213,6 @@ function NodePage({ theme, lang }) {
         if (cfg.dockerConfig && !diskRes?.configs?.docker) setDockerConfig(cfg.dockerConfig)
         if (cfg.cfConfig) setCfConfig(prev => ({ ...prev, ...cfg.cfConfig }))
         if (cfg.dbConfig && !diskRes?.configs?.db) setDbConfig(cfg.dbConfig)
-      }
-      // Load paths from settings
-      if (res?.paths) {
-        setWizardPaths(prev => ({ ...prev, ...res.paths }))
-        if (res.paths.base) {
-          setHasPaths(true)
-        }
-      }
-      if (res?.setupComplete) {
-        setAllInstalled(true)
-      } else if (!res?.paths?.base) {
-        setFirstTimeOpen(true)
       }
     } catch {}
   }
@@ -288,35 +256,14 @@ function NodePage({ theme, lang }) {
     if (window.electronAPI.onInstallProgress) {
       window.electronAPI.onInstallProgress(({ key, percent, message }) => {
         const update = { percent, message }
-        const progressLine = `[${percent}%] ${message}`
         if (key === 'docker') {
           setDockerProgress(update)
-          setWizardDockerLog(prev => {
-            const lines = prev.split('\n').filter(l => !l.startsWith('[') || l.startsWith('[INFO]') || l.startsWith('[OK]') || l.startsWith('[LỖI]'))
-            lines.push(progressLine)
-            return lines.join('\n')
-          })
         } else if (key === 'wings') {
           setWingsProgress(update)
-          setWizardWingsLog(prev => {
-            const lines = prev.split('\n').filter(l => !l.startsWith('[') || l.startsWith('[INFO]') || l.startsWith('[OK]') || l.startsWith('[LỖI]'))
-            lines.push(progressLine)
-            return lines.join('\n')
-          })
         } else if (key === 'cloudflare') {
           setCfProgress(update)
-          setWizardCfLog(prev => {
-            const lines = prev.split('\n').filter(l => !l.startsWith('[') || l.startsWith('[INFO]') || l.startsWith('[OK]') || l.startsWith('[LỖI]'))
-            lines.push(progressLine)
-            return lines.join('\n')
-          })
         } else if (key === 'database') {
           setDbProgress(update)
-          setWizardCfLog(prev => {
-            const lines = prev.split('\n').filter(l => !l.startsWith('[') || l.startsWith('[INFO]') || l.startsWith('[OK]') || l.startsWith('[LỖI]'))
-            lines.push(progressLine)
-            return lines.join('\n')
-          })
         }
       })
     }
@@ -479,154 +426,6 @@ function NodePage({ theme, lang }) {
     }
   }
 
-  // Wizard handlers
-  const handleWizardDockerInstall = async () => {
-    if (!isElectron) return
-    setWizardProcessing(true); setWizardDockerLog('[INFO] ' + (lang === 'vi' ? 'Đang cài Docker...' : 'Installing Docker...'))
-    const res = await window.electronAPI.installDocker()
-    if (res?.ok) { setWizardDockerLog(prev => prev + '\n[OK] ' + (lang === 'vi' ? 'Cài thành công!' : 'Installed!')); setTimeout(() => { setWizardStep(2); setWizardProcessing(false) }, 1000) }
-    else if (res?.needAuth) { setWizardDockerLog(prev => prev + '\n[LỖI] ' + (lang === 'vi' ? 'Cần quyền root. Hãy xác thực sudo trước.' : 'Needs root. Authenticate sudo first.')); setWizardProcessing(false); setAuthOpen(true) }
-    else { setWizardDockerLog(prev => prev + '\n[LỖI] ' + (res?.error || '')); setWizardProcessing(false) }
-  }
-  const handleWizardWingsInstall = async () => {
-    if (!isElectron) return
-    setWizardProcessing(true); setWizardWingsLog('[INFO] ' + (lang === 'vi' ? 'Đang cài Wings...' : 'Installing Wings...'))
-    const res = await window.electronAPI.installWings()
-    if (res?.ok) { setWizardWingsLog(prev => prev + '\n[OK] ' + (lang === 'vi' ? 'Cài thành công!' : 'Installed!')); refreshAll() }
-    else { setWizardWingsLog(prev => prev + '\n[LỖI] ' + (res?.error || '')); setWizardProcessing(false) }
-  }
-  const handleWizardCfLogin = async () => {
-    if (!isElectron) return
-    setWizardProcessing(true); setWizardCfLog('[INFO] ' + (lang === 'vi' ? 'Đang mở trình duyệt...' : 'Opening browser...'))
-    const res = await window.electronAPI.cloudflaredLogin()
-    if (res?.ok) {
-      setWizardCfLog(prev => prev + '\n[OK] ' + (res.message || (lang === 'vi' ? 'Đã mở trình duyệt! Hãy đăng nhập Cloudflare.' : 'Browser opened! Login to Cloudflare.')))
-      addToast(lang === 'vi' ? 'Đang mở trình duyệt Cloudflare...' : 'Opening Cloudflare browser...', 'ok')
-    } else {
-      setWizardCfLog(prev => prev + '\n[LỖI] ' + (res?.error || ''))
-    }
-    setWizardProcessing(false)
-  }
-  const handleWizardCfCheckAuth = async () => {
-    if (!isElectron) return
-    const res = await window.electronAPI.cloudflaredCheckAuth()
-    if (res?.authenticated) {
-      setCfAuthenticated(true)
-      setWizardCfLog(prev => prev + '\n[OK] ' + (lang === 'vi' ? 'Đã xác thực Cloudflare!' : 'Cloudflare authenticated!'))
-      addToast(lang === 'vi' ? 'Đã xác thực Cloudflare!' : 'Authenticated!', 'ok')
-    } else {
-      setWizardCfLog(prev => prev + '\n[LỖI] ' + (lang === 'vi' ? 'Chưa xác thực. Hãy đăng nhập trước.' : 'Not authenticated. Login first.'))
-    }
-  }
-  const handleWizardSavePaths = async () => {
-    if (!isElectron) return
-    await window.electronAPI.saveSettings({ paths: wizardPaths })
-    setHasPaths(true)
-    refreshAll()
-    setWizardStep(1)
-  }
-
-  const handleQuickSetup = async () => {
-    if (!isElectron) return
-    if (!wizardPaths.base) return
-    setWizardProcessing(true)
-    setWizardDockerLog('')
-    setWizardWingsLog('')
-    setWizardCfLog('')
-    // Step 1: Save paths
-    setWizardDockerLog('[INFO] ' + (lang === 'vi' ? 'Đang lưu đường dẫn...' : 'Saving paths...'))
-    const saveRes = await window.electronAPI.saveSettings({ paths: wizardPaths })
-    if (!saveRes?.ok) { setWizardDockerLog(prev => prev + '\n[LỖI] Không lưu được settings'); setWizardProcessing(false); return }
-    await refreshAll()
-    const t0 = Date.now()
-    // Step 2: Install Docker
-    setWizardStep(1)
-    setWizardDockerLog(prev => prev + '\n[INFO] ' + (lang === 'vi' ? 'Bắt đầu cài Docker...' : 'Starting Docker install...'))
-    let res = await window.electronAPI.installDocker()
-    const dockerTime = ((Date.now() - t0) / 1000).toFixed(1)
-    if (res?.ok) {
-      setWizardDockerLog(prev => prev + '\n[OK] ' + (lang === 'vi' ? `Docker cài thành công! (${dockerTime}s, ${res.version || ''})` : `Docker installed! (${dockerTime}s, ${res.version || ''})`))
-    } else {
-      setWizardDockerLog(prev => prev + '\n[LỖI] ' + (res?.needAuth ? (lang === 'vi' ? 'Cần quyền root. Hãy xác thực sudo trước.' : 'Needs root. Authenticate sudo first.') : (res?.error || 'Unknown error')))
-      setWizardProcessing(false)
-      if (res?.needAuth) setAuthOpen(true)
-      return
-    }
-    await refreshAll()
-    // Step 3: Install Wings
-    setWizardStep(2)
-    const t1 = Date.now()
-    setWizardWingsLog('[INFO] ' + (lang === 'vi' ? 'Bắt đầu cài Wings...' : 'Starting Wings install...'))
-    res = await window.electronAPI.installWings()
-    const wingsTime = ((Date.now() - t1) / 1000).toFixed(1)
-    if (res?.ok) {
-      setWizardWingsLog(prev => prev + '\n[OK] ' + (lang === 'vi' ? `Wings cài thành công! (${wingsTime}s, v${res.version || '?'}, ${res.arch || ''})` : `Wings installed! (${wingsTime}s, v${res.version || '?'}, ${res.arch || ''})`))
-    } else {
-      setWizardWingsLog(prev => prev + '\n[LỖI] ' + (res?.error || 'Unknown error'))
-      setWizardProcessing(false)
-      return
-    }
-    setWizardWingsLog(prev => prev + '\n[INFO] ' + (lang === 'vi' ? 'Đang tạo config Wings...' : 'Generating Wings config...'))
-    const cfgRes = await window.electronAPI.generateWingsConfig()
-    if (cfgRes?.ok) {
-      setWizardWingsLog(prev => prev + '\n[OK] ' + (lang === 'vi' ? `Config Wings đã tạo! (token: ${cfgRes.token ? cfgRes.token.substring(0,8)+'...' : '?'})` : `Wings config generated!`))
-      setWingsConfigSaved(true)
-    } else {
-      setWizardWingsLog(prev => prev + '\n[LỖI] ' + (cfgRes?.error || ''))
-    }
-    await refreshAll()
-    // Step 4: Install Cloudflare
-    setWizardStep(3)
-    const t2 = Date.now()
-    setWizardCfLog('[INFO] ' + (lang === 'vi' ? 'Bắt đầu cài Cloudflared...' : 'Starting Cloudflared install...'))
-    const sysInfo = await window.electronAPI.getSystemInfo()
-    res = await window.electronAPI.installCloudflared(sysInfo?.arch === 'arm64' ? 'aarch64' : 'x86_64')
-    const cfTime = ((Date.now() - t2) / 1000).toFixed(1)
-    if (res?.ok) {
-      setWizardCfLog(prev => prev + '\n[OK] ' + (lang === 'vi' ? `Cloudflared cài thành công! (${cfTime}s, ${res.version || ''})` : `Cloudflared installed! (${cfTime}s, ${res.version || ''})`))
-    } else {
-      setWizardCfLog(prev => prev + '\n[LỖI] ' + (res?.error || ''))
-      setWizardProcessing(false)
-      return
-    }
-    // Step 5: Install Database
-    const t3 = Date.now()
-    setWizardCfLog(prev => prev + '\n[INFO] ' + (lang === 'vi' ? 'Bắt đầu cài PostgreSQL...' : 'Starting PostgreSQL install...'))
-    res = await window.electronAPI.installDatabase()
-    const dbTime = ((Date.now() - t3) / 1000).toFixed(1)
-    if (res?.ok) {
-      setWizardCfLog(prev => prev + '\n[OK] ' + (lang === 'vi' ? `PostgreSQL cài thành công! (${dbTime}s, ${res.version || ''})` : `PostgreSQL installed! (${dbTime}s, ${res.version || ''})`))
-    } else {
-      setWizardCfLog(prev => prev + '\n[LỖI] ' + (res?.error || ''))
-    }
-    // Done
-    const totalTime = ((Date.now() - t0) / 1000).toFixed(1)
-    await window.electronAPI.saveSettings({ setupComplete: true })
-    setWizardCfLog(prev => prev + '\n[OK] ' + (lang === 'vi' ? `🎉 Setup hoàn tất! Tổng thời gian: ${totalTime}s` : `Setup complete! Total: ${totalTime}s`))
-    setAllInstalled(true)
-    setWizardProcessing(false)
-    await refreshAll()
-    addToast(lang === 'vi' ? `Setup hoàn tất trong ${totalTime}s!` : `Setup complete in ${totalTime}s!`, 'ok')
-  }
-  const handleWizardPickFolder = async () => {
-    if (!isElectron) return
-    const res = await window.electronAPI.openFolderPicker(wizardPaths.base || '')
-    if (res?.path) {
-      const base = res.path
-      setWizardPaths({
-        base,
-        docker: `${base}/docker`,
-        wings: `${base}/wings`,
-        wingsConfig: `${base}/wings-config`,
-        cloudflare: `${base}/cloudflare`,
-        database: `${base}/database`,
-        downloads: `${base}/downloads`,
-        servers: `${base}/servers`,
-        logs: `${base}/logs`,
-      })
-    }
-  }
-
   const dockerColor = !docker ? '#6b7280' : docker.installed ? (docker.running ? '#22c55e' : '#ef4444') : '#6b7280'
   const wingsColor = !wings ? '#6b7280' : wings.installed ? (wings.running ? '#06b6d4' : '#ef4444') : '#6b7280'
   const cfColor = !cloudflare ? '#6b7280' : cloudflare.installed ? (cloudflare.running ? '#22c55e' : '#ef4444') : '#6b7280'
@@ -642,28 +441,6 @@ function NodePage({ theme, lang }) {
       <Toast toasts={toasts} />
       <ConfirmModal open={confirmOpen} title={confirmData.title} message={confirmData.message} confirmLabel={confirmData.confirmLabel} confirmColor={confirmData.confirmColor} theme={theme} lang={lang} onConfirm={handleConfirm} onCancel={() => setConfirmOpen(false)} />
 
-      {firstTimeOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="max-w-sm w-[90vw] rounded-2xl p-6 space-y-4" style={{ background: theme === 'light' ? '#fff' : '#141414', border: `1px solid ${inputBorder}` }}>
-            <div className="text-center space-y-2">
-              <div className="w-14 h-14 rounded-full mx-auto flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #a78bfa20, #818cf820)' }}>
-                <svg className="w-7 h-7" style={{ color: '#a78bfa' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-              </div>
-              <h3 className="text-sm font-bold" style={{ color: textColor }}>{lang === 'vi' ? 'Chào mừng đến Terver Panel!' : 'Welcome to Terver Panel!'}</h3>
-              <p className="text-[11px]" style={{ color: labelColor }}>{lang === 'vi' ? 'Chưa có cài đặt nào. Bạn muốn setup như thế nào?' : 'No setup found. How would you like to proceed?'}</p>
-            </div>
-            <div className="space-y-2">
-              <button onClick={() => { setFirstTimeOpen(false); setWizardOpen(true); setWizardStep(0) }} className="w-full py-3 rounded-xl text-xs font-semibold transition-all hover:opacity-80 active:scale-95 flex items-center justify-center gap-2" style={{ background: 'linear-gradient(135deg, #a78bfa, #818cf8)', color: '#fff' }}>
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                {lang === 'vi' ? 'Setup nhanh (tự động)' : 'Quick Setup (auto)'}
-              </button>
-              <button onClick={() => { setFirstTimeOpen(false) }} className="w-full py-3 rounded-xl text-xs font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: labelColor }}>
-                {lang === 'vi' ? 'Thủ công (tự cài từng bước)' : 'Manual (install step by step)'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       <div className="max-w-4xl mx-auto space-y-4">
 
         {authOpen && (
@@ -686,10 +463,6 @@ function NodePage({ theme, lang }) {
               <p className="text-[10px]" style={{ color: labelColor }}>{lang === 'vi' ? 'Cài đặt, trạng thái và cấu hình' : 'Install, status and configuration'}</p>
             </div>
           </div>
-          <button onClick={() => { setWizardOpen(true); setWizardStep(allInstalled ? 0 : 0); setWizardDockerLog(''); setWizardWingsLog(''); setWizardCfLog('') }} className="px-3 py-1.5 rounded-xl text-[10px] font-semibold flex items-center gap-1.5 transition-all hover:opacity-80 active:scale-95" style={{ background: 'linear-gradient(135deg, #a78bfa, #818cf8)', color: '#fff' }}>
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-            {allInstalled ? (lang === 'vi' ? 'Đã cài đặt' : 'Installed') : (lang === 'vi' ? 'Setup nhanh' : 'Quick Setup')}
-          </button>
         </div>
 
         {sysInfo && (
@@ -911,151 +684,6 @@ function NodePage({ theme, lang }) {
           </div>
         )}
 
-        {wizardOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setWizardOpen(false)}>
-            <div className="max-w-md w-[90vw] rounded-2xl overflow-hidden" style={{ background: theme === 'light' ? '#fff' : '#141414', border: `1px solid ${inputBorder}` }} onClick={e => e.stopPropagation()}>
-              <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${inputBorder}` }}>
-                <h3 className="text-sm font-bold" style={{ color: textColor }}>{allInstalled ? (lang === 'vi' ? 'Đã cài đặt' : 'Already Installed') : (lang === 'vi' ? 'Setup nhanh' : 'Quick Setup')}</h3>
-                <button onClick={() => setWizardOpen(false)} className="w-5 h-5 rounded flex items-center justify-center transition-all hover:opacity-80 active:scale-95" style={{ color: labelColor }}><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
-              </div>
-              <div className="p-4 space-y-3">
-                {/* Step indicators */}
-                {!allInstalled && (
-                  <div className="flex gap-1">
-                    {[{ key: 0, label: lang === 'vi' ? 'Đường dẫn' : 'Paths', color: '#a78bfa' }, { key: 1, label: 'Docker', color: '#2496ed' }, { key: 2, label: 'Wings', color: '#06b6d4' }, { key: 3, label: 'CF Tunnel', color: '#3b82f6' }].map((s, i) => (
-                      <div key={s.key} className="flex items-center gap-1 flex-1">
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold" style={{ background: wizardStep > i ? s.color : wizardStep === i ? s.color : inputBg, color: wizardStep >= i ? '#fff' : labelColor }}>{wizardStep > i ? '✓' : i + 1}</div>
-                        <span className="text-[9px] font-semibold" style={{ color: wizardStep >= i ? s.color : labelColor }}>{s.label}</span>
-                        {i < 3 && <div className="flex-1 h-px mx-1" style={{ background: wizardStep > i ? s.color : inputBorder }} />}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Already installed view */}
-                {allInstalled && (
-                  <div className="space-y-3 py-4">
-                    <div className="text-center space-y-2">
-                      <div className="w-12 h-12 rounded-full mx-auto flex items-center justify-center" style={{ background: '#22c55e20' }}>
-                        <svg className="w-6 h-6" style={{ color: '#22c55e' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                      </div>
-                      <p className="text-xs font-semibold" style={{ color: textColor }}>{lang === 'vi' ? 'Tất cả đã được cài đặt!' : 'Everything is installed!'}</p>
-                      <p className="text-[10px]" style={{ color: labelColor }}>{lang === 'vi' ? 'Docker, Wings, Cloudflare đã sẵn sàng.' : 'Docker, Wings, Cloudflare are ready.'}</p>
-                    </div>
-                    <button onClick={() => { setAllInstalled(false); setWizardStep(0) }} className="w-full py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: labelColor }}>
-                      {lang === 'vi' ? 'Cài lại / Thay đổi đường dẫn' : 'Reinstall / Change paths'}
-                    </button>
-                  </div>
-                )}
-
-                {/* Step 0: Path selection */}
-                {wizardStep === 0 && !allInstalled && (
-                  <div className="space-y-2">
-                    <p className="text-[11px] font-semibold" style={{ color: textColor }}>{lang === 'vi' ? 'Bước 1: Chọn thư mục lưu trữ' : 'Step 1: Choose storage directory'}</p>
-                    <p className="text-[10px]" style={{ color: labelColor, opacity: 0.6 }}>{lang === 'vi' ? 'Chọn một thư mục. Hệ thống tự tạo thư mục con theo loại.' : 'Pick a folder. Subdirectories auto-created by type.'}</p>
-                    <button onClick={handleWizardPickFolder} className="w-full py-2.5 rounded-lg text-[11px] font-semibold transition-all hover:opacity-80 active:scale-95 flex items-center justify-center gap-2" style={{ background: wizardPaths.base ? '#22c55e20' : '#a78bfa', border: `1px solid ${wizardPaths.base ? '#22c55e40' : inputBorder}`, color: wizardPaths.base ? '#22c55e' : '#fff' }}>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                      {wizardPaths.base ? wizardPaths.base : (lang === 'vi' ? 'Chọn thư mục...' : 'Choose folder...')}
-                    </button>
-                    {wizardPaths.base && (
-                      <div className="space-y-1 max-h-[200px] overflow-auto pr-1">
-                        {Object.entries({
-                          docker: { icon: '🐳', label: 'Docker' },
-                          wings: { icon: '🪽', label: 'Wings' },
-                          wingsConfig: { icon: '⚙️', label: 'Wings Config' },
-                          cloudflare: { icon: '☁️', label: 'Cloudflare' },
-                          database: { icon: '🗄️', label: 'PostgreSQL' },
-                          downloads: { icon: '📥', label: 'Downloads' },
-                          servers: { icon: '🎮', label: 'Game Servers' },
-                          logs: { icon: '📋', label: 'Logs' },
-                        }).map(([key, info]) => (
-                          <div key={key} className="flex items-center gap-2 px-2 py-1 rounded-lg" style={{ background: inputBg }}>
-                            <span className="text-xs">{info.icon}</span>
-                            <div className="flex-1 min-w-0">
-                              <span className="text-[10px] font-medium" style={{ color: labelColor }}>{info.label}</span>
-                              <p className="text-[10px] truncate" style={{ color: textColor }}>{wizardPaths[key]}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Step 1: Docker */}
-                {wizardStep === 1 && !allInstalled && (
-                  <div className="space-y-2">
-                    <p className="text-[11px] font-semibold" style={{ color: textColor }}>Bước 2: Docker Engine</p>
-                    {docker?.installed ? (
-                      <div className="p-2 rounded-lg text-[10px]" style={{ background: '#22c55e20', color: '#22c55e' }}>✓ Docker {lang === 'vi' ? 'đã cài' : 'installed'}</div>
-                    ) : (
-                      <button onClick={handleWizardDockerInstall} disabled={wizardProcessing} className="w-full py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: '#2496ed', color: '#fff', opacity: wizardProcessing ? 0.5 : 1 }}>{wizardProcessing ? '...' : 'Cài Docker'}</button>
-                    )}
-                    <LogBox value={wizardDockerLog} placeholder={lang === 'vi' ? 'Sẵn sàng.' : 'Ready.'} theme={theme} labelColor={labelColor} inputBg={inputBg} inputBorder={inputBorder} copiedKey={copiedKey} copyKey="wd" onCopy={() => copy('wd', wizardDockerLog)} />
-                  </div>
-                )}
-
-                {/* Step 2: Wings */}
-                {wizardStep === 2 && !allInstalled && (
-                  <div className="space-y-2">
-                    <p className="text-[11px] font-semibold" style={{ color: textColor }}>Bước 3: LunarSpace Wings</p>
-                    {wings?.installed ? (
-                      <div className="space-y-2">
-                        <div className="p-2 rounded-lg text-[10px]" style={{ background: '#06b6d420', color: '#06b6d4' }}>✓ Wings {lang === 'vi' ? 'đã cài' : 'installed'}</div>
-                        {!wings?.hasConfig ? (
-                          <button onClick={handleWingsConfigGenerate} className="w-full py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: wingsConfigSaved ? '#22c55e' : '#a78bfa', color: '#fff' }}>{wingsConfigSaved ? '✓' : (lang === 'vi' ? 'Tạo config' : 'Generate config')}</button>
-                        ) : (
-                          <button onClick={() => setWizardStep(3)} className="w-full py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: '#06b6d4', color: '#fff' }}>{lang === 'vi' ? 'Tiếp → Cloudflare' : 'Next → Cloudflare'}</button>
-                        )}
-                      </div>
-                    ) : (
-                      <button onClick={handleWizardWingsInstall} disabled={wizardProcessing} className="w-full py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: '#06b6d4', color: '#fff', opacity: wizardProcessing ? 0.5 : 1 }}>{wizardProcessing ? '...' : 'Cài Wings'}</button>
-                    )}
-                    <LogBox value={wizardWingsLog} placeholder={lang === 'vi' ? 'Sẵn sàng.' : 'Ready.'} theme={theme} labelColor={labelColor} inputBg={inputBg} inputBorder={inputBorder} copiedKey={copiedKey} copyKey="ww" onCopy={() => copy('ww', wizardWingsLog)} />
-                  </div>
-                )}
-
-                {/* Step 3: Cloudflare */}
-                {wizardStep === 3 && !allInstalled && (
-                  <div className="space-y-2">
-                    <p className="text-[11px] font-semibold" style={{ color: textColor }}>Bước 4: Cloudflare Tunnel</p>
-                    {!cloudflare?.installed ? (
-                      <div className="p-2 rounded-lg text-[10px]" style={{ background: '#ef444420', color: '#ef4444' }}>{lang === 'vi' ? 'Cài cloudflared trước.' : 'Install cloudflared first.'}</div>
-                    ) : (
-                      <div className="space-y-2">
-                        <div className="flex gap-1.5">
-                          <button onClick={handleWizardCfLogin} className="flex-1 py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: cfAuthenticated ? '#22c55e' : '#3b82f6', color: '#fff' }}>{cfAuthenticated ? (lang === 'vi' ? 'Đã đăng nhập' : 'Logged in') : (lang === 'vi' ? 'Đăng nhập' : 'Login')}</button>
-                          <button onClick={handleWizardCfCheckAuth} className="flex-1 py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: labelColor }}>{lang === 'vi' ? 'Kiểm tra' : 'Check'}</button>
-                        </div>
-                        <input value={cfConfig.tunnelName} onChange={(e) => setCfConfig({ ...cfConfig, tunnelName: e.target.value })} placeholder={lang === 'vi' ? 'Tên tunnel (tùy ý)' : 'Tunnel name'} className="w-full px-3 py-1.5 rounded-lg text-[11px] outline-none" style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: textColor }} />
-                        <input value={cfConfig.appDomain} onChange={(e) => setCfConfig({ ...cfConfig, appDomain: e.target.value })} placeholder={lang === 'vi' ? 'Domain đầy đủ (ví dụ: panel.example.com)' : 'Full domain (e.g. panel.example.com)'} className="w-full px-3 py-1.5 rounded-lg text-[11px] outline-none" style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: textColor }} />
-                        <button onClick={handleTunnelCreate} className="w-full py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: '#3b82f6', color: '#fff' }}>{lang === 'vi' ? 'Tạo Tunnel' : 'Create Tunnel'}</button>
-                      </div>
-                    )}
-                    <LogBox value={wizardCfLog} placeholder={lang === 'vi' ? 'Sẵn sàng.' : 'Ready.'} theme={theme} labelColor={labelColor} inputBg={inputBg} inputBorder={inputBorder} copiedKey={copiedKey} copyKey="wc" onCopy={() => copy('wc', wizardCfLog)} />
-                  </div>
-                )}
-
-                {/* Navigation buttons */}
-                <div className="flex gap-1.5 pt-1">
-                  {wizardStep > 0 && !allInstalled && <button onClick={() => setWizardStep(wizardStep - 1)} className="px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: labelColor }}>←</button>}
-                  {wizardStep === 0 && !allInstalled && (
-                    <button onClick={handleWizardSavePaths} className="px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: '#a78bfa', color: '#fff' }}>
-                      {lang === 'vi' ? 'Lưu & Tiếp →' : 'Save & Next →'}
-                    </button>
-                  )}
-                  {wizardStep === 1 && docker?.installed && !allInstalled && <button onClick={() => setWizardStep(2)} className="px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: '#06b6d4', color: '#fff' }}>{lang === 'vi' ? 'Tiếp →' : 'Next →'}</button>}
-                  {wizardStep === 3 && cloudflare?.installed && !allInstalled && (
-                    <button onClick={async () => { await window.electronAPI.saveSettings({ setupComplete: true }); setAllInstalled(true); refreshAll() }} className="px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ background: '#22c55e', color: '#fff' }}>
-                      {lang === 'vi' ? '✓ Hoàn tất' : '✓ Done'}
-                    </button>
-                  )}
-                  <button onClick={() => setWizardOpen(false)} className="ml-auto px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all hover:opacity-80 active:scale-95" style={{ color: labelColor }}>{lang === 'vi' ? 'Đóng' : 'Close'}</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

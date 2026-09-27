@@ -228,6 +228,20 @@ const vi = {
   'schedule.emptyHint': 'Tạo cron + multi-step: command, power, backup',
   'schedule.save': 'Lưu',
   'schedule.cancel': 'Hủy',
+  'setup.title': 'Thiết lập Terver Panel',
+  'setup.subtitle': 'Tạo tài khoản quản trị và chuẩn bị node',
+  'setup.step.account': 'Tài khoản',
+  'setup.step.node': 'Node',
+  'setup.step.done': 'Hoàn tất',
+  'setup.adminAccount': 'Tài khoản quản trị viên',
+  'setup.adminHint': 'Đây là lần khởi tạo đầu tiên — tài khoản này sẽ trở thành quản trị viên.',
+  'setup.next': 'Tiếp tục',
+  'setup.install': 'Cài đặt',
+  'setup.panel': 'Terver Panel',
+  'setup.refresh': 'Kiểm tra lại',
+  'setup.skip': 'Bỏ qua',
+  'setup.done.title': 'Thiết lập hoàn tất!',
+  'setup.finish': 'Vào bảng điều khiển',
 }
 
 export default vi

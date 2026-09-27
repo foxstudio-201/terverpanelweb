@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import { execSync } from 'child_process'
 import https from 'https'
-import { readSettings, writeSettings, listServerConfigs, getServerByUuid, updateServerConfig, generateUUID, EGGS_DIR, addServerConfig, removeServerConfig, hashPassword } from './db.js'
+import { readSettings, writeSettings, listServerConfigs, getServerByUuid, updateServerConfig, generateUUID, EGGS_DIR, addServerConfig, removeServerConfig, hashPassword, verifyPassword } from './db.js'
 import { registerUser, loginUser, logoutUser, getSessionFromToken } from './auth.js'
 import { createApiKey, listApiKeys, deleteApiKey } from './apikeys.js'
 import {
@@ -82,7 +82,6 @@ const ADMIN_CHANNELS = new Set([
   'cloudflare:install', 'cloudflare:tunnel:create', 'cloudflare:tunnel:install-service', 'cloudflare:tunnel:login',
   'database:setup', 'database:install',
   'users:list', 'users:create', 'users:delete', 'users:setAdmin', 'users:setPassword',
-  'apikeys:list', 'apikeys:create', 'apikeys:delete',
 ])
 
 // channels whose first argument is a server id/uuid — non-admins may only
@@ -191,13 +190,73 @@ export const handlers = {
     return { ok: true }
   },
 
-  // ---- API keys (admin only; keys authenticate /api/application) ----
-  'apikeys:list': async () => ({ ok: true, keys: listApiKeys() }),
-  'apikeys:create': async (payload) => {
-    const { key, record } = createApiKey(payload || {})
+  // ---- account self-service ----
+  'account:changePassword': async (payload, ctx) => {
+    const user = ctx?.user
+    if (!user) return { ok: false, error: 'Chưa đăng nhập' }
+    const { oldPassword, newPassword } = payload || {}
+    if (typeof newPassword !== 'string' || newPassword.length < 6) {
+      return { ok: false, error: 'Mật khẩu mới phải ít nhất 6 ký tự' }
+    }
+    const db = readDB()
+    const target = (db.users || []).find(u => u.id === user.id)
+    if (!target) return { ok: false, error: 'Không tìm thấy người dùng' }
+    if (!verifyPassword(String(oldPassword || ''), target.passwordHash)) {
+      return { ok: false, error: 'Mật khẩu hiện tại không đúng' }
+    }
+    target.passwordHash = hashPassword(newPassword)
+    // revoke all other sessions — only the current one stays alive
+    db.sessions = (db.sessions || []).filter(s => s.userId !== user.id || s.id === ctx?.session?.id)
+    writeDB(db)
+    return { ok: true }
+  },
+  'account:sessions:list': async (_payload, ctx) => {
+    const user = ctx?.user
+    if (!user) return { ok: false, error: 'Chưa đăng nhập' }
+    const db = readDB()
+    const sessions = (db.sessions || [])
+      .filter(s => s.userId === user.id)
+      .map(s => ({ id: s.id, createdAt: s.createdAt, current: s.id === ctx?.session?.id }))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    return { ok: true, sessions }
+  },
+  'account:sessions:revoke': async (sessionId, ctx) => {
+    const user = ctx?.user
+    if (!user) return { ok: false, error: 'Chưa đăng nhập' }
+    const db = readDB()
+    const target = (db.sessions || []).find(s => s.id === sessionId && s.userId === user.id)
+    if (!target) return { ok: false, error: 'Không tìm thấy phiên đăng nhập' }
+    db.sessions = db.sessions.filter(s => s.id !== sessionId)
+    writeDB(db)
+    return { ok: true }
+  },
+
+  // ---- API keys (admin manages all; users manage their own scoped keys) ----
+  'apikeys:list': async (_payload, ctx) => {
+    let keys = listApiKeys()
+    if (!ctx?.user?.admin) {
+      keys = keys.filter(k => !k.admin && k.userId === ctx?.user?.id)
+    }
+    return { ok: true, keys }
+  },
+  'apikeys:create': async (payload, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    let opts = payload || {}
+    if (!ctx.user.admin) {
+      opts = { name: opts.name, admin: false, userId: ctx.user.id }
+    }
+    const { key, record } = createApiKey(opts)
     return { ok: true, key, record }
   },
-  'apikeys:delete': async (id) => ({ ok: deleteApiKey(id) }),
+  'apikeys:delete': async (id, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const record = listApiKeys().find(k => k.id === id)
+    if (!record) return { ok: false, error: 'Không tìm thấy API key' }
+    if (!ctx.user.admin && (record.admin || record.userId !== ctx.user.id)) {
+      return { ok: false, error: 'Không có quyền xóa API key này' }
+    }
+    return { ok: deleteApiKey(id) }
+  },
 
   // ---- system ----
   'system:getInfo': async () => {
@@ -663,7 +722,10 @@ export async function invokeHandler(channel, args = [], ctx = {}) {
   try {
     if (!ctx.user && ctx.token) {
       const s = getSessionFromToken(ctx.token)
-      if (s) ctx.user = s.user
+      if (s) {
+        ctx.user = s.user
+        ctx.session = s.session
+      }
     }
     if (ADMIN_CHANNELS.has(channel) && !ctx.user?.admin) {
       return { error: 'Chỉ quản trị viên mới thực hiện được thao tác này' }

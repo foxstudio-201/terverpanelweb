@@ -113,6 +113,14 @@ const webApi = {
     return api('/api/auth/session')
   },
 
+  // account self-service
+  changePassword: (oldPassword, newPassword) => invoke('account:changePassword', { oldPassword, newPassword }),
+  listSessions: () => invoke('account:sessions:list'),
+  revokeSession: (id) => invoke('account:sessions:revoke', id),
+
+  // OOBE setup state (needsSetup = no users yet)
+  getOOBE: () => api('/api/oobe'),
+
   // user management (admin panel)
   listUsers: () => invoke('users:list'),
   createUser: (username, password) => invoke('users:create', { username, password }),

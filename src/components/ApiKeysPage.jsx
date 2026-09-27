@@ -11,13 +11,14 @@ function ApiKeysPage({ theme, lang, currentUser }) {
   const inputBorder = theme === 'light' ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)'
 
   const isVi = lang === 'vi'
+  const isAdmin = !!currentUser?.admin
   const [keys, setKeys] = useState([])
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
-  const [form, setForm] = useState({ name: '', scope: 'admin', userId: currentUser?.id || '' })
+  const [form, setForm] = useState({ name: '', scope: isAdmin ? 'admin' : 'user', userId: currentUser?.id || '' })
   const [newKey, setNewKey] = useState(null) // shown once after creation
 
   const load = useCallback(async () => {
@@ -25,7 +26,7 @@ function ApiKeysPage({ theme, lang, currentUser }) {
     try {
       const [kr, ur] = await Promise.all([
         window.electronAPI.listApiKeys(),
-        window.electronAPI.listUsers(),
+        isAdmin ? window.electronAPI.listUsers() : Promise.resolve(null),
       ])
       if (kr?.ok) setKeys(kr.keys || [])
       else setError(kr?.error || (isVi ? 'Không tải được danh sách key' : 'Failed to load keys'))
@@ -35,7 +36,7 @@ function ApiKeysPage({ theme, lang, currentUser }) {
     } finally {
       setLoading(false)
     }
-  }, [isVi, currentUser])
+  }, [isVi, isAdmin])
 
   useEffect(() => { load() }, [load])
 
@@ -47,13 +48,15 @@ function ApiKeysPage({ theme, lang, currentUser }) {
   const handleCreate = async (e) => {
     e.preventDefault()
     if (!form.name.trim()) return
-    if (form.scope === 'user' && !form.userId) {
+    const scope = isAdmin ? form.scope : 'user'
+    const userId = isAdmin ? form.userId : currentUser?.id
+    if (scope === 'user' && !userId) {
       flash(isVi ? 'Chọn người dùng' : 'Pick a user', true)
       return
     }
     setBusy(true)
     try {
-      const res = await window.electronAPI.createApiKey(form.name.trim(), form.scope, form.userId)
+      const res = await window.electronAPI.createApiKey(form.name.trim(), scope, userId)
       if (res?.error) flash(res.error, true)
       else {
         setNewKey(res.key)
@@ -99,8 +102,12 @@ function ApiKeysPage({ theme, lang, currentUser }) {
           </h2>
           <p className="text-sm mt-1" style={{ color: labelColor }}>
             {isVi
-              ? 'Kết nối phần mềm ngoài qua REST API: gửi header Authorization: Bearer tpk_… tới /api/application/* (danh sách server, users, power, logs, system…).'
-              : 'Connect external software via REST API: send Authorization: Bearer tpk_… to /api/application/* (servers, users, power, logs, system…).'}
+              ? (isAdmin
+                ? 'Kết nối phần mềm ngoài qua REST API: gửi header Authorization: Bearer tpk_… tới /api/application/* (danh sách server, users, power, logs, system…).'
+                : 'Tạo key cá nhân để kết nối phần mềm ngoài: gửi Authorization: Bearer tpk_… tới /api/application/*. Key chỉ truy cập được server thuộc về bạn.')
+              : (isAdmin
+                ? 'Connect external software via REST API: send Authorization: Bearer tpk_… to /api/application/* (servers, users, power, logs, system…).'
+                : 'Create a personal key for external software: send Authorization: Bearer tpk_… to /api/application/*. Your keys only reach your own servers.')}
           </p>
         </div>
 
@@ -148,28 +155,39 @@ function ApiKeysPage({ theme, lang, currentUser }) {
               className="px-4 py-2.5 rounded-lg text-sm outline-none"
               style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: textColor }}
             />
-            <select
-              value={form.scope}
-              onChange={(e) => setForm({ ...form, scope: e.target.value })}
-              className="px-4 py-2.5 rounded-lg text-sm outline-none"
-              style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: textColor }}
-            >
-              <option value="admin" style={{ color: '#111' }}>{isVi ? 'Toàn quyền (admin)' : 'Full access (admin)'}</option>
-              <option value="user" style={{ color: '#111' }}>{isVi ? 'Giới hạn theo người dùng' : 'Limited to one user'}</option>
-            </select>
-            {form.scope === 'user' && (
-              <select
-                value={form.userId}
-                onChange={(e) => setForm({ ...form, userId: e.target.value })}
-                className="px-4 py-2.5 rounded-lg text-sm outline-none sm:col-span-2"
-                style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: textColor }}
+            {isAdmin ? (
+              <>
+                <select
+                  value={form.scope}
+                  onChange={(e) => setForm({ ...form, scope: e.target.value })}
+                  className="px-4 py-2.5 rounded-lg text-sm outline-none"
+                  style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: textColor }}
+                >
+                  <option value="admin" style={{ color: '#111' }}>{isVi ? 'Toàn quyền (admin)' : 'Full access (admin)'}</option>
+                  <option value="user" style={{ color: '#111' }}>{isVi ? 'Giới hạn theo người dùng' : 'Limited to one user'}</option>
+                </select>
+                {form.scope === 'user' && (
+                  <select
+                    value={form.userId}
+                    onChange={(e) => setForm({ ...form, userId: e.target.value })}
+                    className="px-4 py-2.5 rounded-lg text-sm outline-none sm:col-span-2"
+                    style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: textColor }}
+                  >
+                    {users.map(u => (
+                      <option key={u.id} value={u.id} style={{ color: '#111' }}>
+                        {u.username}{u.admin ? (isVi ? ' (quản trị)' : ' (admin)') : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </>
+            ) : (
+              <div
+                className="px-4 py-2.5 rounded-lg text-sm"
+                style={{ background: inputBg, border: `1px solid ${inputBorder}`, color: labelColor }}
               >
-                {users.map(u => (
-                  <option key={u.id} value={u.id} style={{ color: '#111' }}>
-                    {u.username}{u.admin ? (isVi ? ' (quản trị)' : ' (admin)') : ''}
-                  </option>
-                ))}
-              </select>
+                {isVi ? `Key gắn với tài khoản của bạn (${currentUser?.username || ''})` : `Bound to your account (${currentUser?.username || ''})`}
+              </div>
             )}
           </div>
           <button
@@ -226,7 +244,9 @@ function ApiKeysPage({ theme, lang, currentUser }) {
                   {k.admin ? <ShieldCheck size={12} weight="duotone" /> : <User size={12} weight="duotone" />}
                   {k.admin
                     ? (isVi ? 'Toàn quyền' : 'Admin')
-                    : (users.find(u => u.id === k.userId)?.username || (isVi ? 'theo user' : 'per user'))}
+                    : (!isAdmin
+                      ? (isVi ? 'của tôi' : 'mine')
+                      : (users.find(u => u.id === k.userId)?.username || (isVi ? 'theo user' : 'per user')))}
                 </span>
 
                 <button
