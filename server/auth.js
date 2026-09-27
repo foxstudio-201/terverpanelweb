@@ -2,7 +2,7 @@ import jwt from 'jsonwebtoken'
 import crypto from 'crypto'
 import path from 'path'
 import fs from 'fs'
-import { readDB, writeDB, APP_DATA_DIR, USERNAME_RE, hashPassword, verifyPassword, generateUUID, writeSettings } from './db.js'
+import { readDB, writeDB, APP_DATA_DIR, USERNAME_RE, hashPassword, verifyPassword, generateUUID, writeSettings, appendActivity } from './db.js'
 
 const SECRET_FILE = path.join(APP_DATA_DIR, 'jwt-secret')
 
@@ -72,6 +72,7 @@ export function registerUser({ username, password }) {
   }
   db.users.push(newUser)
   writeDB(db)
+  appendActivity({ userId: newUser.id, username, type: 'account', message: `Tài khoản "${username}" được tạo${newUser.admin ? ' (quản trị viên)' : ''}` })
   return { ok: true, user: { id: newUser.id, username: newUser.username, admin: newUser.admin, createdAt: newUser.createdAt } }
 }
 
@@ -98,6 +99,7 @@ export function loginUser({ username, password, rememberMe }) {
     writeSettings({ savedUsername: '', savedPassword: '', rememberMe: false })
   }
   const token = signToken(session, user)
+  appendActivity({ userId: user.id, username: user.username, type: 'auth', message: `Đăng nhập${rememberMe ? ' (ghi nhớ)' : ''}` })
   return {
     ok: true,
     token,
@@ -106,10 +108,13 @@ export function loginUser({ username, password, rememberMe }) {
   }
 }
 
-export function logoutUser() {
+export function logoutUser(user) {
   const db = readDB()
   db.currentSession = null
   writeDB(db)
+  if (user) {
+    appendActivity({ userId: user.id, username: user.username, type: 'auth', message: 'Đăng xuất' })
+  }
   return { ok: true }
 }
 

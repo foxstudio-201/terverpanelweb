@@ -121,6 +121,50 @@ const webApi = {
   // OOBE setup state (needsSetup = no users yet)
   getOOBE: () => api('/api/oobe'),
 
+  // activity / audit log
+  listActivity: (scope, limit) => invoke('activity:list', { scope, limit }),
+
+  // locations & nodes
+  listLocations: () => invoke('locations:list'),
+  createLocation: (name, description) => invoke('locations:create', { name, description }),
+  updateLocation: (id, data) => invoke('locations:update', { id, ...data }),
+  deleteLocation: (id) => invoke('locations:delete', id),
+  listNodes: () => invoke('nodes:list'),
+  setNodeLocation: (nodeId, locationId) => invoke('nodes:setLocation', { nodeId, locationId }),
+
+  // nests & eggs
+  createNest: (name) => invoke('nests:create', { name }),
+  deleteNest: (name) => invoke('nests:deleteNest', name),
+  saveEgg: (nest, file, data) => invoke('nests:save', { nest, file, data }),
+  deleteEgg: (eggId) => invoke('nests:deleteEgg', eggId),
+
+  // database hosts
+  listDbHosts: () => invoke('dbhosts:list'),
+  createDbHost: (data) => invoke('dbhosts:create', data),
+  updateDbHost: (data) => invoke('dbhosts:update', data),
+  deleteDbHost: (id) => invoke('dbhosts:delete', id),
+
+  // command snippets
+  listSnippets: () => invoke('snippets:list'),
+  createSnippet: (name, command) => invoke('snippets:create', { name, command }),
+  updateSnippet: (id, data) => invoke('snippets:update', { id, ...data }),
+  deleteSnippet: (id) => invoke('snippets:delete', id),
+
+  // SSH keys
+  listSshKeys: (scope) => invoke('sshkeys:list', { scope }),
+  addSshKey: (name, publicKey) => invoke('sshkeys:add', { name, publicKey }),
+  deleteSshKey: (id) => invoke('sshkeys:delete', id),
+  installSshKey: (id) => invoke('sshkeys:install', id),
+  uninstallSshKey: (id) => invoke('sshkeys:uninstall', id),
+
+  // security keys (WebAuthn)
+  listWebauthn: () => invoke('webauthn:list'),
+  deleteWebauthn: (id) => invoke('webauthn:delete', id),
+  webauthnRegisterOptions: () => invoke('webauthn:registerOptions', {}),
+  webauthnRegisterVerify: (response, name) => invoke('webauthn:registerVerify', { response, name }),
+  webauthnAuthOptions: (username) => invoke('webauthn:authOptions', { username, origin: typeof window !== 'undefined' ? window.location.origin : '' }),
+  webauthnAuthVerify: (username, response) => invoke('webauthn:authVerify', { username, response }),
+
   // user management (admin panel)
   listUsers: () => invoke('users:list'),
   createUser: (username, password) => invoke('users:create', { username, password }),

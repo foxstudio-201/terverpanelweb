@@ -39,8 +39,8 @@ export function verifyPassword(password, stored) {
 // One-time migration: first registered user becomes admin (OOBE),
 // legacy servers (created before ownership) belong to the first admin.
 function migrate(db) {
-  if (!Array.isArray(db.users) || db.users.length === 0) return false
   let changed = false
+  if (!Array.isArray(db.users) || db.users.length === 0) return false
   if (!db.users.some(u => 'admin' in u)) {
     db.users[0].admin = true
     changed = true
@@ -51,7 +51,45 @@ function migrate(db) {
       if (!s.ownerId) { s.ownerId = owner.id; changed = true }
     }
   }
+  // collections introduced with Calagopus-parity features
+  if (!Array.isArray(db.locations)) { db.locations = []; changed = true }
+  if (!Array.isArray(db.nodes)) {
+    db.nodes = [{ id: 'local', name: 'Node địa phương', local: true, locationId: null, createdAt: new Date().toISOString() }]
+    changed = true
+  } else if (db.nodes.length === 0) {
+    db.nodes.push({ id: 'local', name: 'Node địa phương', local: true, locationId: null, createdAt: new Date().toISOString() })
+    changed = true
+  }
+  if (!Array.isArray(db.dbhosts)) { db.dbhosts = []; changed = true }
+  if (!Array.isArray(db.activity)) { db.activity = []; changed = true }
+  if (!Array.isArray(db.snippets)) { db.snippets = []; changed = true }
+  if (!Array.isArray(db.sshKeys)) { db.sshKeys = []; changed = true }
+  if (!Array.isArray(db.webauthn)) { db.webauthn = []; changed = true }
+  if (!db.webauthnChallenges) { db.webauthnChallenges = {}; changed = true }
   return changed
+}
+
+const ACTIVITY_CAP = 1000
+
+// Append an entry to the activity/audit log (capped). Safe to call anywhere.
+export function appendActivity({ userId = null, username = '', type = 'info', message = '', meta = null }) {
+  try {
+    const db = readDB()
+    db.activity = db.activity || []
+    db.activity.push({
+      id: generateUUID(),
+      userId,
+      username,
+      type,
+      message: String(message).slice(0, 500),
+      meta,
+      createdAt: new Date().toISOString(),
+    })
+    if (db.activity.length > ACTIVITY_CAP) {
+      db.activity = db.activity.slice(db.activity.length - ACTIVITY_CAP)
+    }
+    writeDB(db)
+  } catch {}
 }
 
 export function readDB() {

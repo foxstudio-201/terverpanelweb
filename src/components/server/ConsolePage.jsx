@@ -61,6 +61,7 @@ export default function ConsolePage({ server, theme, lang, onServerUpdate }) {
   const [searchText, setSearchText] = useState('')
   const [fontSize, setFontSize] = useState(12)
   const [wsPing, setWsPing] = useState(0)
+  const [snippets, setSnippets] = useState([])
 
   const termRef = useRef(null)
   const termElRef = useRef(null)
@@ -507,6 +508,18 @@ function isTpsProbeNoise(text) {
     }
   }
 
+  const handleSendSnippet = (snippet) => {
+    setCommand(snippet.command || '')
+  }
+
+  useEffect(() => {
+    let alive = true
+    window.electronAPI?.listSnippets?.()
+      .then((r) => { if (alive && r?.ok) setSnippets(r.snippets || []) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+
   const copySelection = useCallback(async () => {
     try {
       const term = termRef.current
@@ -695,6 +708,26 @@ function isTpsProbeNoise(text) {
             </div>
           )}
         </div>
+
+        {snippets.length > 0 && (
+          <div className="w-full mt-3 flex flex-wrap items-center gap-1.5 shrink-0">
+            <span className="text-[10px] font-semibold" style={{ color: labelColor }}>
+              {lang === 'vi' ? 'Snippets:' : 'Snippets:'}
+            </span>
+            {snippets.slice(0, 12).map((s) => (
+              <button
+                key={s.id}
+                onClick={() => handleSendSnippet(s)}
+                disabled={!wsConnected || isOffline}
+                title={s.command}
+                className="px-2 py-1 rounded-md text-[10px] font-mono transition-all hover:opacity-85 active:scale-95 disabled:opacity-40"
+                style={{ background: 'rgba(167,139,250,0.15)', border: '1px solid rgba(167,139,250,0.3)', color: '#a78bfa' }}
+              >
+                {s.name}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="w-full mt-3 flex flex-row gap-2 shrink-0">
           <input

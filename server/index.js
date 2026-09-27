@@ -54,7 +54,7 @@ app.post('/api/auth/login', (req, res) => {
 })
 
 app.post('/api/auth/logout', authMiddleware, (req, res) => {
-  res.json(logoutUser())
+  res.json(logoutUser(req.user))
 })
 
 app.get('/api/auth/session', authMiddleware, (req, res) => {
@@ -82,7 +82,8 @@ app.post('/api/invoke', authMiddleware, async (req, res) => {
   const { channel, args } = req.body || {}
   if (!channel) return res.status(400).json({ error: 'channel required' })
   const token = (req.headers.authorization || '').replace(/^Bearer /, '')
-  const result = await invokeHandler(channel, Array.isArray(args) ? args : [], { token, broadcast })
+  const origin = req.headers.origin || `http://${req.headers.host || 'localhost'}`
+  const result = await invokeHandler(channel, Array.isArray(args) ? args : [], { token, broadcast, origin })
   res.json(result === undefined ? { ok: true } : result)
 })
 

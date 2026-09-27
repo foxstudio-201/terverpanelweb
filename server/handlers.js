@@ -3,8 +3,12 @@ import fs from 'fs'
 import path from 'path'
 import { execSync } from 'child_process'
 import https from 'https'
-import { readSettings, writeSettings, listServerConfigs, getServerByUuid, updateServerConfig, generateUUID, EGGS_DIR, addServerConfig, removeServerConfig, hashPassword, verifyPassword } from './db.js'
-import { registerUser, loginUser, logoutUser, getSessionFromToken } from './auth.js'
+import { readSettings, writeSettings, listServerConfigs, getServerByUuid, updateServerConfig, generateUUID, EGGS_DIR, addServerConfig, removeServerConfig, hashPassword, verifyPassword, appendActivity } from './db.js'
+import { registerUser, loginUser, logoutUser, getSessionFromToken, signToken } from './auth.js'
+import {
+  generateRegistrationOptions, verifyRegistrationResponse,
+  generateAuthenticationOptions, verifyAuthenticationResponse,
+} from '@simplewebauthn/server'
 import { createApiKey, listApiKeys, deleteApiKey } from './apikeys.js'
 import {
   getWingsRemoteToken, getRemoteServers, powerServer, getStatus, getServerState,
@@ -82,6 +86,10 @@ const ADMIN_CHANNELS = new Set([
   'cloudflare:install', 'cloudflare:tunnel:create', 'cloudflare:tunnel:install-service', 'cloudflare:tunnel:login',
   'database:setup', 'database:install',
   'users:list', 'users:create', 'users:delete', 'users:setAdmin', 'users:setPassword',
+  'locations:create', 'locations:update', 'locations:delete', 'nodes:setLocation',
+  'nests:create', 'nests:save', 'nests:deleteEgg', 'nests:deleteNest',
+  'dbhosts:create', 'dbhosts:update', 'dbhosts:delete',
+  'sshkeys:install', 'sshkeys:uninstall',
 ])
 
 // channels whose first argument is a server id/uuid — non-admins may only
@@ -105,6 +113,56 @@ function canAccessServer(user, serverId) {
   if (user.admin) return true
   const s = getServerByUuid(String(serverId ?? ''))
   return !!s && s.ownerId === user.id
+}
+
+function webauthnRp(ctx) {
+  try {
+    const url = new URL(ctx?.origin || 'http://localhost')
+    return { rpID: url.hostname, origin: url.origin }
+  } catch { return null }
+}
+
+const AUTHORIZED_KEYS_FILE = path.join(os.homedir(), '.ssh', 'authorized_keys')
+
+function authorizedKeyBlock(id) {
+  return { begin: `# BEGIN TerverPanel ${id}`, end: `# END TerverPanel ${id}` }
+}
+
+function installAuthorizedKey(key) {
+  try {
+    const dir = path.dirname(AUTHORIZED_KEYS_FILE)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+    let content = fs.existsSync(AUTHORIZED_KEYS_FILE) ? fs.readFileSync(AUTHORIZED_KEYS_FILE, 'utf8') : ''
+    const { begin, end } = authorizedKeyBlock(key.id)
+    if (!content.includes(begin)) {
+      if (content && !content.endsWith('\n')) content += '\n'
+      content += `${begin}\n${key.publicKey} terver-panel:${key.username || 'user'}\n${end}\n`
+      fs.writeFileSync(AUTHORIZED_KEYS_FILE, content, { mode: 0o600 })
+    }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) }
+  }
+}
+
+function removeAuthorizedKey(id) {
+  try {
+    if (!fs.existsSync(AUTHORIZED_KEYS_FILE)) return { ok: true }
+    const { begin, end } = authorizedKeyBlock(id)
+    const lines = fs.readFileSync(AUTHORIZED_KEYS_FILE, 'utf8').split('\n')
+    const start = lines.indexOf(begin)
+    if (start === -1) return { ok: true }
+    let finish = -1
+    for (let i = start + 1; i < lines.length; i++) {
+      if (lines[i].trim() === end) { finish = i; break }
+    }
+    if (finish === -1) return { ok: false, error: 'Khối authorized_keys bị hỏng — hãy sửa tệp thủ công' }
+    lines.splice(start, finish - start + 1)
+    fs.writeFileSync(AUTHORIZED_KEYS_FILE, lines.join('\n'), { mode: 0o600 })
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) }
+  }
 }
 
 export const handlers = {
@@ -164,9 +222,10 @@ export const handlers = {
     db.users = db.users.filter(u => u.id !== id)
     db.sessions = (db.sessions || []).filter(s => s.userId !== id)
     writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Xóa người dùng "${target.username}"` })
     return { ok: true }
   },
-  'users:setAdmin': async (id, admin) => {
+  'users:setAdmin': async (id, admin, ctx) => {
     const db = readDB()
     const target = (db.users || []).find(u => u.id === id)
     if (!target) return { ok: false, error: 'Không tìm thấy người dùng' }
@@ -176,9 +235,10 @@ export const handlers = {
     }
     target.admin = want
     writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `${want ? 'Cấp' : 'Thu hồi'} quyền quản trị của "${target.username}"` })
     return { ok: true, user: { id: target.id, username: target.username, admin: target.admin } }
   },
-  'users:setPassword': async (id, password) => {
+  'users:setPassword': async (id, password, ctx) => {
     if (typeof password !== 'string' || password.length < 6) {
       return { ok: false, error: 'Mật khẩu phải ít nhất 6 ký tự' }
     }
@@ -187,6 +247,7 @@ export const handlers = {
     if (!target) return { ok: false, error: 'Không tìm thấy người dùng' }
     target.passwordHash = hashPassword(password)
     writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Đặt lại mật khẩu của "${target.username}"` })
     return { ok: true }
   },
 
@@ -208,6 +269,7 @@ export const handlers = {
     // revoke all other sessions — only the current one stays alive
     db.sessions = (db.sessions || []).filter(s => s.userId !== user.id || s.id === ctx?.session?.id)
     writeDB(db)
+    appendActivity({ userId: user.id, username: user.username, type: 'security', message: 'Đổi mật khẩu' })
     return { ok: true }
   },
   'account:sessions:list': async (...callArgs) => {
@@ -250,6 +312,7 @@ export const handlers = {
       opts = { name: opts.name, admin: false, userId: ctx.user.id }
     }
     const { key, record } = createApiKey(opts)
+    appendActivity({ userId: ctx.user.id, username: ctx.user.username, type: 'apikey', message: `Tạo API key "${record.name}"` })
     return { ok: true, key, record }
   },
   'apikeys:delete': async (id, ctx) => {
@@ -259,7 +322,440 @@ export const handlers = {
     if (!ctx.user.admin && (record.admin || record.userId !== ctx.user.id)) {
       return { ok: false, error: 'Không có quyền xóa API key này' }
     }
-    return { ok: deleteApiKey(id) }
+    const ok = deleteApiKey(id)
+    if (ok) appendActivity({ userId: ctx.user.id, username: ctx.user.username, type: 'apikey', message: `Xóa API key "${record.name}"` })
+    return { ok }
+  },
+
+  // ---- activity / audit log (users see their own; admins may see all) ----
+  'activity:list': async (payload, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const p = payload || {}
+    const db = readDB()
+    let items = db.activity || []
+    const wantAll = ctx.user.admin && p.scope === 'all'
+    if (!wantAll) items = items.filter(a => a.userId === ctx.user.id)
+    items = [...items].reverse()
+    const limit = Math.min(Math.max(parseInt(p.limit) || 100, 1), 500)
+    return { ok: true, total: items.length, items: items.slice(0, limit) }
+  },
+
+  // ---- locations (group nodes, Calagopus-style) ----
+  'locations:list': async () => {
+    const db = readDB()
+    return { ok: true, locations: db.locations || [], nodes: db.nodes || [] }
+  },
+  'locations:create': async (payload, ctx) => {
+    const name = String(payload?.name || '').trim().slice(0, 60)
+    if (!name) return { ok: false, error: 'Tên location không được để trống' }
+    const db = readDB()
+    db.locations = db.locations || []
+    const location = { id: generateUUID(), name, description: String(payload?.description || '').slice(0, 200), createdAt: new Date().toISOString() }
+    db.locations.push(location)
+    writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Tạo location "${location.name}"` })
+    return { ok: true, location }
+  },
+  'locations:update': async (payload, ctx) => {
+    const db = readDB()
+    const target = (db.locations || []).find(l => l.id === payload?.id)
+    if (!target) return { ok: false, error: 'Không tìm thấy location' }
+    if (payload.name !== undefined) {
+      const name = String(payload.name).trim().slice(0, 60)
+      if (!name) return { ok: false, error: 'Tên location không được để trống' }
+      target.name = name
+    }
+    if (payload.description !== undefined) target.description = String(payload.description).slice(0, 200)
+    writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Sửa location "${target.name}"` })
+    return { ok: true, location: target }
+  },
+  'locations:delete': async (id, ctx) => {
+    const db = readDB()
+    const target = (db.locations || []).find(l => l.id === id)
+    if (!target) return { ok: false, error: 'Không tìm thấy location' }
+    db.locations = db.locations.filter(l => l.id !== id)
+    for (const n of db.nodes || []) {
+      if (n.locationId === id) n.locationId = null
+    }
+    writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Xóa location "${target.name}"` })
+    return { ok: true }
+  },
+  'nodes:list': async () => {
+    const db = readDB()
+    if (!Array.isArray(db.nodes) || db.nodes.length === 0) {
+      db.nodes = [{ id: 'local', name: 'Node địa phương', local: true, locationId: null, createdAt: new Date().toISOString() }]
+      writeDB(db)
+    }
+    return { ok: true, nodes: db.nodes }
+  },
+  'nodes:setLocation': async (payload, ctx) => {
+    const db = readDB()
+    const node = (db.nodes || []).find(n => n.id === payload?.nodeId)
+    if (!node) return { ok: false, error: 'Không tìm thấy node' }
+    const locationId = payload?.locationId || null
+    if (locationId && !(db.locations || []).some(l => l.id === locationId)) {
+      return { ok: false, error: 'Location không tồn tại' }
+    }
+    node.locationId = locationId
+    writeDB(db)
+    const locName = locationId ? (db.locations || []).find(l => l.id === locationId)?.name : '—'
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Gán node "${node.name}" vào location "${locName || '—'}"` })
+    return { ok: true, node }
+  },
+
+  // ---- nests & eggs (files under eggs/<nest>/<egg>.json) ----
+  'nests:create': async (payload, ctx) => {
+    const game = String(payload?.name || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40)
+    if (game.length < 2) return { ok: false, error: 'Tên nest không hợp lệ (a-z, 0-9, -, _, tối thiểu 2 ký tự)' }
+    const dir = path.join(EGGS_DIR, game)
+    if (fs.existsSync(dir)) return { ok: false, error: 'Nest đã tồn tại' }
+    fs.mkdirSync(dir, { recursive: true })
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Tạo nest "${game}"` })
+    return { ok: true, nest: game }
+  },
+  'nests:save': async (payload, ctx) => {
+    const game = String(payload?.nest || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')
+    let file = String(payload?.file || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')
+    if (!game || !file) return { ok: false, error: 'Thiếu nest/file hợp lệ' }
+    if (file.endsWith('.json')) file = file.slice(0, -5)
+    if (!payload?.data || typeof payload.data !== 'object') return { ok: false, error: 'Dữ liệu egg phải là object JSON' }
+    if (!payload.data.name) return { ok: false, error: 'Egg phải có trường name' }
+    const dir = path.join(EGGS_DIR, game)
+    if (!fs.existsSync(dir)) return { ok: false, error: 'Nest không tồn tại' }
+    const filePath = path.join(dir, file + '.json')
+    fs.writeFileSync(filePath, JSON.stringify(payload.data, null, 2), { mode: 0o644 })
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Lưu egg "${game}/${file}"` })
+    return { ok: true, eggId: `${game}/${file}` }
+  },
+  'nests:deleteEgg': async (eggId, ctx) => {
+    const parts = String(eggId || '').split('/')
+    const game = String(parts[0] || '').replace(/[^a-z0-9_-]/g, '')
+    let file = String(parts[1] || '').replace(/[^a-z0-9_-]/g, '')
+    if (!game || !file) return { ok: false, error: 'Egg ID không hợp lệ' }
+    if (file.endsWith('.json')) file = file.slice(0, -5)
+    const filePath = path.join(EGGS_DIR, game, file + '.json')
+    if (!fs.existsSync(filePath)) return { ok: false, error: 'Không tìm thấy egg' }
+    fs.unlinkSync(filePath)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Xóa egg "${game}/${file}"` })
+    return { ok: true }
+  },
+  'nests:deleteNest': async (nest, ctx) => {
+    const game = String(nest || '').replace(/[^a-z0-9_-]/g, '')
+    const dir = path.join(EGGS_DIR, game)
+    if (!game || !fs.existsSync(dir)) return { ok: false, error: 'Không tìm thấy nest' }
+    const remaining = fs.readdirSync(dir).filter(f => !f.startsWith('.'))
+    if (remaining.length > 0) return { ok: false, error: `Nest còn ${remaining.length} egg — hãy xóa egg trước` }
+    fs.rmdirSync(dir)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Xóa nest "${game}"` })
+    return { ok: true }
+  },
+
+  // ---- database hosts (where user databases will live) ----
+  'dbhosts:list': async () => ({ ok: true, hosts: readDB().dbhosts || [] }),
+  'dbhosts:create': async (payload, ctx) => {
+    const name = String(payload?.name || '').trim().slice(0, 60)
+    const host = String(payload?.host || '').trim().slice(0, 255)
+    const engine = payload?.engine === 'postgresql' ? 'postgresql' : 'mysql'
+    const port = parseInt(payload?.port) || (engine === 'postgresql' ? 5432 : 3306)
+    const username = String(payload?.username || '').trim().slice(0, 64)
+    if (!name || !host) return { ok: false, error: 'Tên và host là bắt buộc' }
+    if (port < 1 || port > 65535) return { ok: false, error: 'Port không hợp lệ' }
+    const db = readDB()
+    db.dbhosts = db.dbhosts || []
+    const record = { id: generateUUID(), name, host, port, engine, username, createdAt: new Date().toISOString() }
+    db.dbhosts.push(record)
+    writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Tạo database host "${name}" (${engine})` })
+    return { ok: true, host: record }
+  },
+  'dbhosts:update': async (payload, ctx) => {
+    const db = readDB()
+    const target = (db.dbhosts || []).find(h => h.id === payload?.id)
+    if (!target) return { ok: false, error: 'Không tìm thấy database host' }
+    if (payload.name !== undefined) target.name = String(payload.name).trim().slice(0, 60) || target.name
+    if (payload.host !== undefined) target.host = String(payload.host).trim().slice(0, 255) || target.host
+    if (payload.engine !== undefined) target.engine = payload.engine === 'postgresql' ? 'postgresql' : 'mysql'
+    if (payload.port !== undefined) {
+      const port = parseInt(payload.port)
+      if (port < 1 || port > 65535) return { ok: false, error: 'Port không hợp lệ' }
+      target.port = port
+    }
+    if (payload.username !== undefined) target.username = String(payload.username).trim().slice(0, 64)
+    writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Sửa database host "${target.name}"` })
+    return { ok: true, host: target }
+  },
+  'dbhosts:delete': async (id, ctx) => {
+    const db = readDB()
+    const target = (db.dbhosts || []).find(h => h.id === id)
+    if (!target) return { ok: false, error: 'Không tìm thấy database host' }
+    db.dbhosts = db.dbhosts.filter(h => h.id !== id)
+    writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Xóa database host "${target.name}"` })
+    return { ok: true }
+  },
+
+  // ---- command snippets (per-user console shortcuts) ----
+  'snippets:list': async (...rest) => {
+    const ctx = rest[rest.length - 1] || {}
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const db = readDB()
+    return { ok: true, snippets: (db.snippets || []).filter(s => s.userId === ctx.user.id) }
+  },
+  'snippets:create': async (payload, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const name = String(payload?.name || '').trim().slice(0, 60)
+    const command = String(payload?.command || '').trim().slice(0, 500)
+    if (!name || !command) return { ok: false, error: 'Tên và lệnh là bắt buộc' }
+    const db = readDB()
+    db.snippets = db.snippets || []
+    const snippet = { id: generateUUID(), userId: ctx.user.id, name, command, createdAt: new Date().toISOString() }
+    db.snippets.push(snippet)
+    writeDB(db)
+    return { ok: true, snippet }
+  },
+  'snippets:update': async (payload, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const db = readDB()
+    const target = (db.snippets || []).find(s => s.id === payload?.id && s.userId === ctx.user.id)
+    if (!target) return { ok: false, error: 'Không tìm thấy snippet' }
+    if (payload.name !== undefined) target.name = String(payload.name).trim().slice(0, 60) || target.name
+    if (payload.command !== undefined) target.command = String(payload.command).trim().slice(0, 500) || target.command
+    writeDB(db)
+    return { ok: true, snippet: target }
+  },
+  'snippets:delete': async (id, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const db = readDB()
+    const target = (db.snippets || []).find(s => s.id === id && s.userId === ctx.user.id)
+    if (!target) return { ok: false, error: 'Không tìm thấy snippet' }
+    db.snippets = db.snippets.filter(s => s.id !== id)
+    writeDB(db)
+    return { ok: true }
+  },
+
+  // ---- SSH keys (stored; admins may install them into the machine) ----
+  'sshkeys:list': async (...rest) => {
+    const ctx = rest[rest.length - 1] || {}
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const payload = rest.length > 1 ? (rest[0] || {}) : {}
+    const db = readDB()
+    let keys = db.sshKeys || []
+    const wantAll = ctx.user.admin && payload.scope === 'all'
+    if (!wantAll) keys = keys.filter(k => k.userId === ctx.user.id)
+    return { ok: true, keys }
+  },
+  'sshkeys:add': async (payload, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const name = String(payload?.name || '').trim().slice(0, 60)
+    const publicKey = String(payload?.publicKey || '').trim()
+    if (!name || !publicKey) return { ok: false, error: 'Tên và khóa công khai là bắt buộc' }
+    const PUBKEY_RE = /^(ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/=]+/
+    if (!PUBKEY_RE.test(publicKey) || publicKey.length > 4096) {
+      return { ok: false, error: 'Khóa công khai không hợp lệ (phải là ssh-ed25519 / ssh-rsa / ecdsa...)' }
+    }
+    const db = readDB()
+    db.sshKeys = db.sshKeys || []
+    const key = { id: generateUUID(), userId: ctx.user.id, username: ctx.user.username, name, publicKey, createdAt: new Date().toISOString(), installedAt: null }
+    db.sshKeys.push(key)
+    writeDB(db)
+    appendActivity({ userId: ctx.user.id, username: ctx.user.username, type: 'security', message: `Thêm SSH key "${name}"` })
+    return { ok: true, key }
+  },
+  'sshkeys:delete': async (id, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const db = readDB()
+    const target = (db.sshKeys || []).find(k => k.id === id)
+    if (!target) return { ok: false, error: 'Không tìm thấy SSH key' }
+    if (!ctx.user.admin && target.userId !== ctx.user.id) return { ok: false, error: 'Không có quyền xóa key này' }
+    if (target.installedAt) {
+      const r = removeAuthorizedKey(target.id)
+      if (!r.ok) return r
+    }
+    db.sshKeys = db.sshKeys.filter(k => k.id !== id)
+    writeDB(db)
+    appendActivity({ userId: ctx.user.id, username: ctx.user.username, type: 'security', message: `Xóa SSH key "${target.name}"` })
+    return { ok: true }
+  },
+  'sshkeys:install': async (id, ctx) => {
+    const db = readDB()
+    const target = (db.sshKeys || []).find(k => k.id === id)
+    if (!target) return { ok: false, error: 'Không tìm thấy SSH key' }
+    const r = installAuthorizedKey(target)
+    if (!r.ok) return r
+    target.installedAt = new Date().toISOString()
+    writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'security', message: `Cài SSH key "${target.name}" vào máy (authorized_keys)` })
+    return { ok: true }
+  },
+  'sshkeys:uninstall': async (id, ctx) => {
+    const db = readDB()
+    const target = (db.sshKeys || []).find(k => k.id === id)
+    if (!target) return { ok: false, error: 'Không tìm thấy SSH key' }
+    const r = removeAuthorizedKey(target.id)
+    if (!r.ok) return r
+    target.installedAt = null
+    writeDB(db)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'security', message: `Gỡ SSH key "${target.name}" khỏi máy` })
+    return { ok: true }
+  },
+
+  // ---- security keys (WebAuthn / passkeys) ----
+  'webauthn:list': async (...rest) => {
+    const ctx = rest[rest.length - 1] || {}
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const db = readDB()
+    const creds = (db.webauthn || [])
+      .filter(c => c.userId === ctx.user.id)
+      .map(c => ({ id: c.id, name: c.name, createdAt: c.createdAt, lastUsedAt: c.lastUsedAt, transports: c.transports || [] }))
+    return { ok: true, credentials: creds }
+  },
+  'webauthn:delete': async (id, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const db = readDB()
+    const target = (db.webauthn || []).find(c => c.id === id && c.userId === ctx.user.id)
+    if (!target) return { ok: false, error: 'Không tìm thấy khóa bảo mật' }
+    db.webauthn = db.webauthn.filter(c => c.id !== id)
+    writeDB(db)
+    appendActivity({ userId: ctx.user.id, username: ctx.user.username, type: 'security', message: `Xóa khóa bảo mật "${target.name}"` })
+    return { ok: true }
+  },
+  'webauthn:registerOptions': async (_payload, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const rp = webauthnRp(ctx)
+    if (!rp) return { ok: false, error: 'Origin không hợp lệ' }
+    const db = readDB()
+    const excludeCredentials = (db.webauthn || [])
+      .filter(c => c.userId === ctx.user.id)
+      .map(c => ({ id: c.id, transports: c.transports }))
+    const options = await generateRegistrationOptions({
+      rpName: 'Terver Panel',
+      rpID: rp.rpID,
+      userID: new TextEncoder().encode(ctx.user.id),
+      userName: ctx.user.username,
+      userDisplayName: ctx.user.username,
+      attestationType: 'none',
+      excludeCredentials,
+      authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
+    })
+    db.webauthnChallenges = db.webauthnChallenges || {}
+    db.webauthnChallenges.reg = db.webauthnChallenges.reg || {}
+    db.webauthnChallenges.reg[ctx.user.id] = { challenge: options.challenge, exp: Date.now() + 5 * 60 * 1000 }
+    writeDB(db)
+    return { ok: true, options }
+  },
+  'webauthn:registerVerify': async (payload, ctx) => {
+    if (!ctx?.user) return { ok: false, error: 'Chưa đăng nhập' }
+    const rp = webauthnRp(ctx)
+    if (!rp) return { ok: false, error: 'Origin không hợp lệ' }
+    const db = readDB()
+    const stored = db.webauthnChallenges?.reg?.[ctx.user.id]
+    if (!stored || stored.exp < Date.now()) return { ok: false, error: 'Thử thách đã hết hạn — hãy thử lại' }
+    let result
+    try {
+      result = await verifyRegistrationResponse({
+        response: payload?.response,
+        expectedChallenge: stored.challenge,
+        expectedOrigin: rp.origin,
+        expectedRPID: rp.rpID,
+        requireUserVerification: false,
+      })
+    } catch (err) {
+      return { ok: false, error: `Xác thực khóa thất bại: ${err?.message || err}` }
+    }
+    if (!result.verified || !result.registrationInfo) return { ok: false, error: 'Xác thực khóa thất bại' }
+    const info = result.registrationInfo
+    db.webauthn = db.webauthn || []
+    // re-register of the same credential replaces the old record
+    db.webauthn = db.webauthn.filter(c => c.id !== info.credentialID)
+    const record = {
+      id: info.credentialID,
+      userId: ctx.user.id,
+      username: ctx.user.username,
+      name: String(payload?.name || '').trim().slice(0, 60) || `Khóa bảo mật ${new Date().toLocaleDateString('vi-VN')}`,
+      publicKey: Buffer.from(info.credentialPublicKey).toString('base64'),
+      counter: info.counter || 0,
+      transports: payload?.response?.response?.transports || [],
+      credentialDeviceType: info.credentialDeviceType || 'unknown',
+      credentialBackedUp: !!info.credentialBackedUp,
+      createdAt: new Date().toISOString(),
+      lastUsedAt: null,
+    }
+    db.webauthn.push(record)
+    delete db.webauthnChallenges.reg[ctx.user.id]
+    writeDB(db)
+    appendActivity({ userId: ctx.user.id, username: ctx.user.username, type: 'security', message: `Đăng ký khóa bảo mật "${record.name}"` })
+    return { ok: true }
+  },
+  'webauthn:authOptions': async (payload) => {
+    const username = String(payload?.username || '')
+    const db = readDB()
+    const user = (db.users || []).find(u => u.username === username)
+    if (!user) return { ok: false, error: 'Không tìm thấy người dùng' }
+    const creds = (db.webauthn || []).filter(c => c.userId === user.id)
+    if (creds.length === 0) return { ok: false, error: 'Tài khoản này chưa có khóa bảo mật' }
+    const origin = String(payload?.origin || '')
+    let rpID = ''
+    try { rpID = new URL(origin).hostname } catch { return { ok: false, error: 'Origin không hợp lệ' } }
+    const options = await generateAuthenticationOptions({
+      rpID,
+      allowCredentials: creds.map(c => ({ id: c.id, transports: c.transports })),
+      userVerification: 'preferred',
+    })
+    db.webauthnChallenges = db.webauthnChallenges || {}
+    db.webauthnChallenges.auth = db.webauthnChallenges.auth || {}
+    db.webauthnChallenges.auth[username] = { challenge: options.challenge, exp: Date.now() + 5 * 60 * 1000 }
+    writeDB(db)
+    return { ok: true, options }
+  },
+  'webauthn:authVerify': async (payload, ctx) => {
+    const username = String(payload?.username || '')
+    const db = readDB()
+    const user = (db.users || []).find(u => u.username === username)
+    if (!user) return { ok: false, error: 'Không tìm thấy người dùng' }
+    const stored = db.webauthnChallenges?.auth?.[username]
+    if (!stored || stored.exp < Date.now()) return { ok: false, error: 'Thử thách đã hết hạn — hãy thử lại' }
+    const rp = webauthnRp(ctx)
+    if (!rp) return { ok: false, error: 'Origin không hợp lệ' }
+    const cred = (db.webauthn || []).find(c => c.userId === user.id && c.id === payload?.response?.id)
+    if (!cred) return { ok: false, error: 'Khóa bảo mật không khớp tài khoản' }
+    let result
+    try {
+      result = await verifyAuthenticationResponse({
+        response: payload?.response,
+        expectedChallenge: stored.challenge,
+        expectedOrigin: rp.origin,
+        expectedRPID: rp.rpID,
+        credential: {
+          id: cred.id,
+          publicKey: new Uint8Array(Buffer.from(cred.publicKey, 'base64')),
+          counter: cred.counter || 0,
+          transports: cred.transports || [],
+        },
+        requireUserVerification: false,
+      })
+    } catch (err) {
+      return { ok: false, error: `Xác thực thất bại: ${err?.message || err}` }
+    }
+    if (!result.verified) return { ok: false, error: 'Xác thực khóa bảo mật thất bại' }
+    const session = { id: generateUUID(), userId: user.id, username: user.username, createdAt: new Date().toISOString() }
+    db.sessions = db.sessions || []
+    db.sessions.push(session)
+    db.currentSession = session.id
+    cred.counter = result.authenticationInfo.newCounter
+    cred.lastUsedAt = new Date().toISOString()
+    delete db.webauthnChallenges.auth[username]
+    writeDB(db)
+    const token = signToken(session, user)
+    appendActivity({ userId: user.id, username: user.username, type: 'auth', message: 'Đăng nhập bằng khóa bảo mật' })
+    return {
+      ok: true,
+      token,
+      session,
+      user: { id: user.id, username: user.username, admin: !!user.admin, createdAt: user.createdAt },
+    }
   },
 
   // ---- system ----
@@ -399,11 +895,14 @@ export const handlers = {
     if (!owner) return { ok: false, error: 'Chủ sở hữu server không tồn tại' }
     const server = { id: generateUUID(), ...config, ownerId: owner.id, createdAt: new Date().toISOString() }
     addServerConfig(server)
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Tạo server "${server.name || server.id}" (chủ sở hữu: ${owner.username})` })
     return { ok: true, server }
   },
-  'server:removeConfig': async (id) => {
+  'server:removeConfig': async (id, ctx) => {
+    const server = getServerByUuid(id)
     removeServerConfig(id)
     try { await deleteServerRemote(id) } catch {}
+    appendActivity({ userId: ctx?.user?.id, username: ctx?.user?.username, type: 'admin', message: `Xóa server "${server?.name || id}"` })
     return { ok: true }
   },
   'server:status': async (serverId) => getStatus(serverId),

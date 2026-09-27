@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { AppProvider, useApp } from './i18n/AppContext'
 import { t } from './i18n/translations'
-import { House, Gear, Heart, Cube, List, Terminal, Files, Database, Clock, Users, Archive, Network, Play, GearSix, ArrowLeft, ChartLineUp, ShieldCheck, Key, UserCircle, ChartBar, HardDrives } from '@phosphor-icons/react'
+import { House, Gear, Heart, Cube, List, Terminal, Files, Database, Clock, Users, Archive, Network, Play, GearSix, ArrowLeft, ChartLineUp, ShieldCheck, Key, UserCircle, ChartBar, HardDrives, MapPin, Egg, ClockCounterClockwise, TerminalWindow, LockKey, Fingerprint } from '@phosphor-icons/react'
 import TitleBar from './components/TitleBar'
 import CloseModal from './components/CloseModal'
 import TooltipProvider from './components/ui/TooltipProvider'
@@ -17,6 +17,13 @@ import AdminUsersPage from './components/AdminUsersPage'
 import AdminHomePage from './components/AdminHomePage'
 import AdminServersPage from './components/AdminServersPage'
 import ApiKeysPage from './components/ApiKeysPage'
+import LocationsPage from './components/LocationsPage'
+import NestsPage from './components/NestsPage'
+import DbHostsPage from './components/DbHostsPage'
+import ActivityPage from './components/ActivityPage'
+import SnippetsPage from './components/SnippetsPage'
+import SshKeysPage from './components/SshKeysPage'
+import SecurityKeysPage from './components/SecurityKeysPage'
 import ServerPanel from './components/server/ServerPanel'
 
 function Spinner({ theme, lang, text }) {
@@ -46,7 +53,7 @@ const SERVER_PANEL_PAGES = [
 ]
 
 // pages only admins may open — api is intentionally NOT here (users manage their own keys)
-const ADMIN_PAGES = ['admin-home', 'docker', 'servers-admin', 'users']
+const ADMIN_PAGES = ['admin-home', 'docker', 'servers-admin', 'users', 'locations', 'nests', 'dbhosts']
 
 function AppContent() {
   const { lang, theme } = useApp()
@@ -450,6 +457,39 @@ function AppContent() {
                   <HardDrives size={16} weight="duotone" />
                   <span className="text-[11px] font-medium">{lang === 'vi' ? 'Tất cả server' : 'Servers'}</span>
                 </button>
+                <button
+                  onClick={() => navigateTo('locations')}
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'locations' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'locations' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <MapPin size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">Locations</span>
+                </button>
+                <button
+                  onClick={() => navigateTo('nests')}
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'nests' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'nests' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <Egg size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">{lang === 'vi' ? 'Nests & Eggs' : 'Nests & Eggs'}</span>
+                </button>
+                <button
+                  onClick={() => navigateTo('dbhosts')}
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'dbhosts' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'dbhosts' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <Database size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">{lang === 'vi' ? 'Database hosts' : 'Database hosts'}</span>
+                </button>
 
                 <p className="text-[9px] font-bold uppercase tracking-wider px-3 pt-3 pb-1" style={{ color: labelColor }}>
                   {lang === 'vi' ? 'Người dùng & Quyền' : 'Users & Access'}
@@ -515,6 +555,54 @@ function AppContent() {
                   <span className="text-xs font-medium">API Keys</span>
                 </button>
 
+                <p className="text-[9px] font-bold uppercase tracking-wider px-3 pt-3 pb-1" style={{ color: labelColor }}>
+                  {lang === 'vi' ? 'Công cụ' : 'Tools'}
+                </p>
+                <button
+                  onClick={() => navigateTo('snippets')}
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'snippets' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'snippets' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <TerminalWindow size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">{lang === 'vi' ? 'Command snippets' : 'Command snippets'}</span>
+                </button>
+                <button
+                  onClick={() => navigateTo('activity')}
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'activity' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'activity' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <ClockCounterClockwise size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">{lang === 'vi' ? 'Nhật ký hoạt động' : 'Activity log'}</span>
+                </button>
+                <button
+                  onClick={() => navigateTo('sshkeys')}
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'sshkeys' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'sshkeys' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <LockKey size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">SSH Keys</span>
+                </button>
+                <button
+                  onClick={() => navigateTo('securitykeys')}
+                  className="w-full h-9 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'securitykeys' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'securitykeys' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <Fingerprint size={16} weight="duotone" />
+                  <span className="text-[11px] font-medium">{lang === 'vi' ? 'Security keys' : 'Security keys'}</span>
+                </button>
+
                 {isAdmin && (
                   <button
                     onClick={() => switchViewMode('admin')}
@@ -577,6 +665,13 @@ function AppContent() {
             {safePage === 'servers-admin' && isAdmin && <AdminServersPage theme={theme} lang={lang} onSelectServer={handleSelectServer} />}
             {safePage === 'users' && isAdmin && <AdminUsersPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
             {safePage === 'api' && <ApiKeysPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
+            {safePage === 'locations' && isAdmin && <LocationsPage theme={theme} lang={lang} />}
+            {safePage === 'nests' && isAdmin && <NestsPage theme={theme} lang={lang} />}
+            {safePage === 'dbhosts' && isAdmin && <DbHostsPage theme={theme} lang={lang} />}
+            {safePage === 'activity' && <ActivityPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
+            {safePage === 'snippets' && <SnippetsPage theme={theme} lang={lang} />}
+            {safePage === 'sshkeys' && <SshKeysPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
+            {safePage === 'securitykeys' && <SecurityKeysPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
             {safePage === 'settings' && <SettingsPage theme={theme} lang={lang} onAppModeChange={setAppMode} appMode={appMode} />}
             {isInServerPanel && selectedSidebarServer && (
               <ServerPanel key={selectedSidebarServer.id} server={selectedSidebarServer} theme={theme} lang={lang} displayPage={displayPage} onBack={handleBackFromServer} onServerDeleted={refreshSidebarServers} onServerUpdate={(srv) => setSelectedSidebarServer(srv)} />

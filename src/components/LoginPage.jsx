@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { UserIcon, LockClosedIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
+import { startAuthentication } from '@simplewebauthn/browser'
 import { useApp } from '../i18n/AppContext'
 import { t } from '../i18n/translations'
 
@@ -48,6 +49,7 @@ function LoginPage({ onLogin, initialUsername, initialPassword, initialRememberM
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [rememberMe, setRememberMe] = useState(initialRememberMe !== undefined ? initialRememberMe : true)
+  const [passkeyLoading, setPasskeyLoading] = useState(false)
 
   const isElectron = typeof window !== 'undefined' && window.electronAPI
   const pwScore = getPasswordStrength(password)
@@ -96,6 +98,46 @@ function LoginPage({ onLogin, initialUsername, initialPassword, initialRememberM
       setError(t(lang, 'login.error.general'))
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handlePasskeyLogin = async () => {
+    if (!username) {
+      setError(t(lang, 'login.error.empty'))
+      return
+    }
+    if (!window.electronAPI?.webauthnAuthOptions
+      || typeof window.PublicKeyCredential === 'undefined'
+      || window.isSecureContext === false) {
+      setError(lang === 'vi'
+        ? 'WebAuthn cần trang https:// hoặc http://localhost.'
+        : 'WebAuthn requires https:// or http://localhost.')
+      return
+    }
+    setPasskeyLoading(true)
+    setError('')
+    try {
+      const opts = await window.electronAPI.webauthnAuthOptions(username)
+      if (!opts?.ok) {
+        setError(opts?.error || (lang === 'vi' ? 'Không bắt đầu được WebAuthn' : 'Failed to start WebAuthn'))
+        return
+      }
+      let assertion
+      try {
+        assertion = await startAuthentication({ optionsJSON: opts.options })
+      } catch (err) {
+        const msg = String(err?.message || err || '')
+        if (msg.includes('Abort') || msg.includes('abort')) return
+        setError(msg || (lang === 'vi' ? 'Người dùng hủy hoặc trình duyệt từ chối' : 'Cancelled or rejected by browser'))
+        return
+      }
+      const result = await window.electronAPI.webauthnAuthVerify(username, assertion)
+      if (result?.error) setError(result.error)
+      else if (result?.ok) onLogin({ user: result.user, session: result.session })
+    } catch {
+      setError(t(lang, 'login.error.general'))
+    } finally {
+      setPasskeyLoading(false)
     }
   }
 
@@ -233,6 +275,29 @@ function LoginPage({ onLogin, initialUsername, initialPassword, initialRememberM
             {loading ? t(lang, 'login.processing') : isRegister ? t(lang, 'login.register') : t(lang, 'login.login')}
           </button>
         </form>
+
+        {!isRegister && (
+          <button
+            type="button"
+            onClick={handlePasskeyLogin}
+            disabled={passkeyLoading || loading}
+            className="w-full mt-3 py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+            style={{
+              background: theme === 'light' ? 'rgba(167,139,250,0.12)' : 'rgba(167,139,250,0.15)',
+              border: '1px solid rgba(167,139,250,0.35)',
+              color: '#a78bfa',
+            }}
+            title={typeof window !== 'undefined' && window.PublicKeyCredential ? undefined : (lang === 'vi' ? 'Cần https:// hoặc localhost' : 'Requires https:// or localhost')}
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+              <path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2" />
+            </svg>
+            {passkeyLoading
+              ? (lang === 'vi' ? 'Đang chờ khóa…' : 'Waiting for key…')
+              : (lang === 'vi' ? 'Đăng nhập bằng khóa bảo mật' : 'Sign in with security key')}
+          </button>
+        )}
 
         {isRegister && needsSetup && (
           <div className="mt-4 p-3 bg-purple-500/15 border border-purple-500/30 rounded-lg text-[13px] text-purple-300">
