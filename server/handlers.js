@@ -210,7 +210,9 @@ export const handlers = {
     writeDB(db)
     return { ok: true }
   },
-  'account:sessions:list': async (_payload, ctx) => {
+  'account:sessions:list': async (...callArgs) => {
+    // invoked with empty args — ctx is the only argument
+    const ctx = callArgs[callArgs.length - 1] || {}
     const user = ctx?.user
     if (!user) return { ok: false, error: 'Chưa đăng nhập' }
     const db = readDB()
@@ -232,7 +234,9 @@ export const handlers = {
   },
 
   // ---- API keys (admin manages all; users manage their own scoped keys) ----
-  'apikeys:list': async (_payload, ctx) => {
+  'apikeys:list': async (...callArgs) => {
+    // invoked with empty args — ctx is the only argument
+    const ctx = callArgs[callArgs.length - 1] || {}
     let keys = listApiKeys()
     if (!ctx?.user?.admin) {
       keys = keys.filter(k => !k.admin && k.userId === ctx?.user?.id)
