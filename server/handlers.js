@@ -3,8 +3,9 @@ import fs from 'fs'
 import path from 'path'
 import { execSync } from 'child_process'
 import https from 'https'
-import { readSettings, writeSettings, listServerConfigs, getServerByUuid, updateServerConfig, generateUUID, EGGS_DIR, addServerConfig, removeServerConfig } from './db.js'
+import { readSettings, writeSettings, listServerConfigs, getServerByUuid, updateServerConfig, generateUUID, EGGS_DIR, addServerConfig, removeServerConfig, hashPassword } from './db.js'
 import { registerUser, loginUser, logoutUser, getSessionFromToken } from './auth.js'
+import { createApiKey, listApiKeys, deleteApiKey } from './apikeys.js'
 import {
   getWingsRemoteToken, getRemoteServers, powerServer, getStatus, getServerState,
   listWingsFiles, readWingsFile, writeWingsFile, deleteWingsPath,
@@ -80,7 +81,8 @@ const ADMIN_CHANNELS = new Set([
   'node:loadConfigs',
   'cloudflare:install', 'cloudflare:tunnel:create', 'cloudflare:tunnel:install-service', 'cloudflare:tunnel:login',
   'database:setup', 'database:install',
-  'users:list', 'users:create', 'users:delete', 'users:setAdmin',
+  'users:list', 'users:create', 'users:delete', 'users:setAdmin', 'users:setPassword',
+  'apikeys:list', 'apikeys:create', 'apikeys:delete',
 ])
 
 // channels whose first argument is a server id/uuid — non-admins may only
@@ -177,6 +179,25 @@ export const handlers = {
     writeDB(db)
     return { ok: true, user: { id: target.id, username: target.username, admin: target.admin } }
   },
+  'users:setPassword': async (id, password) => {
+    if (typeof password !== 'string' || password.length < 6) {
+      return { ok: false, error: 'Mật khẩu phải ít nhất 6 ký tự' }
+    }
+    const db = readDB()
+    const target = (db.users || []).find(u => u.id === id)
+    if (!target) return { ok: false, error: 'Không tìm thấy người dùng' }
+    target.passwordHash = hashPassword(password)
+    writeDB(db)
+    return { ok: true }
+  },
+
+  // ---- API keys (admin only; keys authenticate /api/application) ----
+  'apikeys:list': async () => ({ ok: true, keys: listApiKeys() }),
+  'apikeys:create': async (payload) => {
+    const { key, record } = createApiKey(payload || {})
+    return { ok: true, key, record }
+  },
+  'apikeys:delete': async (id) => ({ ok: deleteApiKey(id) }),
 
   // ---- system ----
   'system:getInfo': async () => {

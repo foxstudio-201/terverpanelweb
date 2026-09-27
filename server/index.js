@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url'
 import { authMiddleware, registerUser, loginUser, logoutUser, getSessionFromToken, hasUsers } from './auth.js'
 import { readSettings, writeSettings, ensureAppDataDir, APP_DATA_DIR } from './db.js'
 import { invokeHandler } from './handlers.js'
+import applicationApi from './applicationApi.js'
 import { getRemoteServers, getWingsRemoteToken } from './wings.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -72,6 +73,9 @@ app.get('/api/settings', authMiddleware, (req, res) => {
 app.post('/api/settings', authMiddleware, (req, res) => {
   res.json({ ok: true, data: writeSettings(req.body || {}) })
 })
+
+// ---- Application API (external software, Bearer tpk_ API key) ----
+app.use('/api/application', applicationApi)
 
 // ---- generic IPC bridge (mirrors electronAPI) ----
 app.post('/api/invoke', authMiddleware, async (req, res) => {

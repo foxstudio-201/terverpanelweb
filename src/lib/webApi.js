@@ -118,6 +118,12 @@ const webApi = {
   createUser: (username, password) => invoke('users:create', { username, password }),
   deleteUser: (id) => invoke('users:delete', id),
   setUserAdmin: (id, admin) => invoke('users:setAdmin', id, admin),
+  setUserPassword: (id, password) => invoke('users:setPassword', id, password),
+
+  // API keys for /api/application (admin panel)
+  listApiKeys: () => invoke('apikeys:list'),
+  createApiKey: (name, scope, userId) => invoke('apikeys:create', { name, admin: scope !== 'user', userId: scope === 'user' ? userId : null }),
+  deleteApiKey: (id) => invoke('apikeys:delete', id),
 
   // rest — 1:1 with preload
   checkDocker: () => invoke('docker:check'),

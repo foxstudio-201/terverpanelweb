@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { AppProvider, useApp } from './i18n/AppContext'
 import { t } from './i18n/translations'
-import { House, Gear, Heart, Cube, List, Terminal, Files, Database, Clock, Users, Archive, Network, Play, GearSix, ArrowLeft, ChartLineUp, ShieldCheck } from '@phosphor-icons/react'
+import { House, Gear, Heart, Cube, List, Terminal, Files, Database, Clock, Users, Archive, Network, Play, GearSix, ArrowLeft, ChartLineUp, ShieldCheck, Key } from '@phosphor-icons/react'
 import TitleBar from './components/TitleBar'
 import CloseModal from './components/CloseModal'
 import ModeSelectModal from './components/ModeSelectModal'
@@ -13,6 +13,7 @@ import HomePage from './components/HomePage'
 import DonatePage from './components/DonatePage'
 import SettingsPage from './components/SettingsPage'
 import AdminUsersPage from './components/AdminUsersPage'
+import ApiKeysPage from './components/ApiKeysPage'
 import ServerPanel from './components/server/ServerPanel'
 
 function Spinner({ theme, lang, text }) {
@@ -41,7 +42,7 @@ const SERVER_PANEL_PAGES = [
   { key: 'server-settings', icon: GearSix, label: 'Settings', labelVi: 'Cài đặt' },
 ]
 
-const ADMIN_PAGES = ['docker', 'users']
+const ADMIN_PAGES = ['docker', 'users', 'api']
 
 function AppContent() {
   const { lang, theme } = useApp()
@@ -412,6 +413,18 @@ function AppContent() {
                   <Users size={18} weight="duotone" />
                   <span className="text-xs font-medium">{t(lang, 'sidebar.users')}</span>
                 </button>
+
+                <button
+                  onClick={() => navigateTo('api')}
+                  className="w-full h-10 shrink-0 rounded-xl flex items-center gap-2.5 px-3 transition-all text-left"
+                  style={{
+                    background: activePage === 'api' ? 'rgba(167,139,250,0.12)' : 'transparent',
+                    color: activePage === 'api' ? '#a78bfa' : labelColor,
+                  }}
+                >
+                  <Key size={18} weight="duotone" />
+                  <span className="text-xs font-medium">API</span>
+                </button>
               </>
             ) : (
               <>
@@ -485,6 +498,7 @@ function AppContent() {
             {safePage === 'donate' && <DonatePage theme={theme} lang={lang} />}
             {safePage === 'docker' && !isBasic && isAdmin && <NodePage theme={theme} lang={lang} />}
             {safePage === 'users' && isAdmin && <AdminUsersPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
+            {safePage === 'api' && isAdmin && <ApiKeysPage theme={theme} lang={lang} currentUser={displaySession?.user} />}
             {safePage === 'settings' && <SettingsPage theme={theme} lang={lang} onAppModeChange={setAppMode} appMode={appMode} />}
             {isInServerPanel && selectedSidebarServer && (
               <ServerPanel key={selectedSidebarServer.id} server={selectedSidebarServer} theme={theme} lang={lang} displayPage={displayPage} onBack={handleBackFromServer} onServerDeleted={refreshSidebarServers} onServerUpdate={(srv) => setSelectedSidebarServer(srv)} />
